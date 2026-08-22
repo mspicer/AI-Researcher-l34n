@@ -23,6 +23,7 @@ from .connectors import build_registry
 from .db import Database, jdump
 from .enrich import Embedder, Enricher, OllamaClient
 from .http import Fetcher
+from .progress import RunProgress
 from .trends import build_clusters, compute_daily_topics, generate_brief
 from .util import iso, utcnow
 
@@ -95,15 +96,22 @@ def sync_sources(db: Database, sources: list[Source]) -> None:
 
 
 class Pipeline:
-    def __init__(self, settings: Settings, db: Database):
+    def __init__(
+        self,
+        settings: Settings,
+        db: Database,
+        progress: RunProgress | None = None,
+    ):
         self.settings = settings
         self.db = db
         self.sources = load_sources(settings)
+        self.progress = progress or RunProgress(settings.data_dir / "ingest.progress.json")
 
     # ── stage 1: ingest ──────────────────────────────────────────────
     async def ingest(self, only: list[str] | None = None) -> dict[str, Any]:
         sync_sources(self.db, self.sources)
         targets = [s for s in self.sources if s.enabled and (not only or s.key in only)]
+        self.progress.begin_sources(len(targets))
 
         fetcher = Fetcher(
             self.settings.user_agent,
@@ -138,14 +146,17 @@ class Pipeline:
         return stats
 
     async def _ingest_source(self, src: Source, registry) -> dict[str, Any]:
+        self.progress.source_start(src.key, src.name)
         connector = registry.get(src.kind)
         if connector is None:
             self._record_source_status(src.key, "error", f"unknown kind '{src.kind}'", 0)
+            self.progress.source_done(src.key, src.name, status="error", new_items=0)
             return {"status": "error", "new": 0, "error": f"unknown kind '{src.kind}'"}
 
         ok, reason = connector.available(src)
         if not ok:
             self._record_source_status(src.key, "disabled", reason, 0)
+            self.progress.source_done(src.key, src.name, status="disabled", new_items=0)
             return {"status": "disabled", "new": 0, "error": reason}
 
         row = self.db.one("SELECT etag, last_modified FROM sources WHERE key=?", (src.key,))
@@ -163,12 +174,14 @@ class Pipeline:
         except Exception as exc:  # noqa: BLE001 - a broken feed must not sink the run
             log.warning("source %s raised: %s", src.key, exc)
             self._record_source_status(src.key, "error", f"{type(exc).__name__}: {exc}"[:300], 0)
+            self.progress.source_done(src.key, src.name, status="error", new_items=0)
             return {"status": "error", "new": 0, "error": str(exc)[:200]}
 
         if result.status == "error":
             if result.cursor:
                 self.db.set_kv(f"cursor:{src.key}", result.cursor)
             self._record_source_status(src.key, "error", result.error, 0)
+            self.progress.source_done(src.key, src.name, status="error", new_items=0)
             return {"status": "error", "new": 0, "error": result.error}
 
         if result.cursor:
@@ -182,6 +195,9 @@ class Pipeline:
         log.info(
             "%-18s %-14s %3d new / %3d fetched  (%.1fs)",
             src.key, result.status, new_count, len(result.items), time.monotonic() - started,
+        )
+        self.progress.source_done(
+            src.key, src.name, status=result.status, new_items=new_count,
         )
         return {"status": result.status, "new": new_count, "error": result.error}
 
@@ -258,11 +274,31 @@ class Pipeline:
     async def analyse(self, *, brief: bool = True, force_brief: bool = False) -> dict[str, Any]:
         client = OllamaClient(self.settings)
         try:
+            self.progress.update(
+                stage="enrich", detail="Probing Ollama", current="", done=0, total=0, active=[],
+            )
             await client.probe()
-            enrich_stats = await Enricher(self.settings, self.db, client).run()
-            embed_stats = await Embedder(self.db, client).run()
+            enrich_stats = await Enricher(
+                self.settings, self.db, client, progress=self.progress,
+            ).run()
+            embed_stats = await Embedder(
+                self.db, client, progress=self.progress,
+            ).run()
+            self.progress.update(
+                stage="cluster", detail="Clustering items into stories",
+                current="", done=0, total=0, active=[],
+            )
             cluster_stats = build_clusters(self.db)
+            self.progress.update(
+                stage="topics", detail="Computing topic history",
+                current="", done=0, total=0, active=[],
+            )
             topic_stats = compute_daily_topics(self.db)
+            if brief:
+                self.progress.update(
+                    stage="brief", detail="Writing daily brief",
+                    current="", done=0, total=0, active=[],
+                )
             brief_stats = (
                 await generate_brief(self.db, client, force=force_brief) if brief else {}
             )
@@ -302,6 +338,7 @@ class Pipeline:
         force_brief: bool = False,
     ) -> dict[str, Any]:
         started = utcnow()
+        self.progress.start()
         cur = self.db.execute(
             "INSERT INTO runs (started_at, status) VALUES (?, 'running')", (iso(started),)
         )
@@ -310,8 +347,18 @@ class Pipeline:
         stats: dict[str, Any] = {}
         status = "ok"
         try:
-            stats["ingest"] = {} if skip_ingest else await self.ingest(only=only)
+            if skip_ingest:
+                stats["ingest"] = {}
+                self.progress.update(
+                    stage="enrich", detail="Skipping fetch — re-analysing stored items",
+                    current="", done=0, total=0, active=[],
+                )
+            else:
+                stats["ingest"] = await self.ingest(only=only)
             stats.update(await self.analyse(force_brief=force_brief))
+            self.progress.update(
+                stage="prune", detail="Pruning old items", current="", done=0, total=0, active=[],
+            )
             self.prune()
         except Exception as exc:  # noqa: BLE001 - record the failure, don't hide it
             status = "error"
@@ -324,6 +371,7 @@ class Pipeline:
                 "UPDATE runs SET finished_at=?, status=?, stats=? WHERE id=?",
                 (iso(utcnow()), status, jdump(stats), run_id),
             )
+            self.progress.finish(ok=status == "ok")
         stats["run_id"] = run_id
         stats["status"] = status
         return stats

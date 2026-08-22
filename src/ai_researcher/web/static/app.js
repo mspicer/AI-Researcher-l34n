@@ -37,36 +37,129 @@
       .finally(function () { btn.disabled = false; });
   });
 
+  /* ── verbose ingest status ─────────────────────────────────── */
+  var VERBOSE_KEY = "air.verboseIngest";
+  var verboseToggle = document.getElementById("verbose-ingest");
+  var ingestStatus = document.getElementById("ingest-status");
+  var ingestStage = document.getElementById("ingest-stage");
+  var ingestDetail = document.getElementById("ingest-detail");
+  var ingestCurrent = document.getElementById("ingest-current");
+  var ingestCounts = document.getElementById("ingest-counts");
+  var verbose = false;
+
+  try {
+    verbose = localStorage.getItem(VERBOSE_KEY) === "1";
+  } catch (e) { /* private mode */ }
+
+  function setVerbose(on) {
+    verbose = !!on;
+    if (verboseToggle) verboseToggle.checked = verbose;
+    if (ingestStatus) {
+      if (verbose) ingestStatus.removeAttribute("hidden");
+      else ingestStatus.setAttribute("hidden", "");
+    }
+    try {
+      localStorage.setItem(VERBOSE_KEY, verbose ? "1" : "0");
+    } catch (e) { /* ignore */ }
+    syncPolling();
+  }
+
+  function renderProgress(progress, running) {
+    if (!ingestStatus || !verbose) return;
+    progress = progress || {};
+    var stage = progress.stage || (running ? "running" : "idle");
+    var detail = progress.detail || (running ? "Working…" : "Idle — toggle stays on for the next refresh");
+    var current = progress.current || "";
+    var done = progress.done || 0;
+    var total = progress.total || 0;
+    var active = progress.active || [];
+
+    if (ingestStage) ingestStage.textContent = stage;
+    if (ingestDetail) ingestDetail.textContent = detail;
+    if (ingestCurrent) {
+      if (current) {
+        ingestCurrent.textContent = current;
+        ingestCurrent.hidden = false;
+      } else if (active.length) {
+        ingestCurrent.textContent = "active: " + active.slice(0, 4).join(", ")
+          + (active.length > 4 ? " +" + (active.length - 4) : "");
+        ingestCurrent.hidden = false;
+      } else {
+        ingestCurrent.textContent = "";
+        ingestCurrent.hidden = true;
+      }
+    }
+    if (ingestCounts) {
+      if (total > 0) {
+        ingestCounts.textContent = done + " / " + total;
+        ingestCounts.hidden = false;
+      } else {
+        ingestCounts.textContent = "";
+        ingestCounts.hidden = true;
+      }
+    }
+    ingestStatus.classList.toggle("live", !!running);
+  }
+
+  if (verboseToggle) {
+    verboseToggle.addEventListener("change", function () {
+      setVerbose(verboseToggle.checked);
+      if (verbose) fetchStatus();
+    });
+  }
+  setVerbose(verbose);
+
   /* ── manual refresh + progress polling ─────────────────────── */
   var refreshBtn = document.getElementById("refresh");
   var dot = document.getElementById("statusdot");
   var lastRun = document.getElementById("lastrun");
-  var polling = false;
+  var pollTimer = null;
+  var wasRunning = !!(refreshBtn && refreshBtn.disabled);
 
-  function poll() {
-    if (polling) return;
-    polling = true;
-    var tick = setInterval(function () {
-      fetch("/api/status")
-        .then(function (r) { return r.json(); })
-        .then(function (d) {
-          if (d.run && d.run.running) return;
-          clearInterval(tick);
-          polling = false;
-          if (dot) dot.classList.remove("busy");
-          if (lastRun) lastRun.textContent = d.stats.last_run;
-          if (refreshBtn) {
-            refreshBtn.disabled = false;
-            refreshBtn.textContent = "Refresh";
-          }
+  function applyStats(stats) {
+    if (!stats) return;
+    document.querySelectorAll("[data-stat]").forEach(function (el) {
+      var key = el.getAttribute("data-stat");
+      if (key && stats[key] != null) el.textContent = stats[key];
+    });
+    if (lastRun && stats.last_run) lastRun.textContent = stats.last_run;
+  }
+
+  function fetchStatus() {
+    return fetch("/api/status")
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        var running = !!(d.run && d.run.running);
+        var progress = (d.run && d.run.progress) || {};
+        applyStats(d.stats);
+        renderProgress(progress, running);
+        if (dot) dot.classList.toggle("busy", running);
+        if (refreshBtn) {
+          refreshBtn.disabled = running;
+          refreshBtn.textContent = running ? "Refreshing…" : "Refresh";
+        }
+        if (wasRunning && !running) {
+          wasRunning = false;
           toast("Refresh complete — reloading", 1500);
           setTimeout(function () { location.reload(); }, 900);
-        })
-        .catch(function () {
-          clearInterval(tick);
-          polling = false;
-        });
-    }, 4000);
+          syncPolling();
+          return d;
+        }
+        wasRunning = running;
+        return d;
+      })
+      .catch(function () { return null; });
+  }
+
+  function syncPolling() {
+    if (pollTimer) {
+      clearInterval(pollTimer);
+      pollTimer = null;
+    }
+    var needPoll = verbose || wasRunning || (refreshBtn && refreshBtn.disabled);
+    if (!needPoll) return;
+    var ms = verbose ? 1000 : 4000;
+    pollTimer = setInterval(fetchStatus, ms);
   }
 
   if (refreshBtn) {
@@ -74,21 +167,40 @@
       refreshBtn.disabled = true;
       refreshBtn.textContent = "Refreshing…";
       if (dot) dot.classList.add("busy");
+      wasRunning = true;
+      if (verbose) {
+        renderProgress({
+          stage: "starting",
+          detail: "Starting ingest run",
+          current: "",
+          done: 0,
+          total: 0,
+          active: [],
+        }, true);
+      }
       fetch("/api/refresh", { method: "POST" })
         .then(function (r) {
           if (r.status === 409) { toast("A refresh is already running"); }
           else { toast("Ingest started — this can take a few minutes"); }
-          poll();
+          syncPolling();
+          fetchStatus();
         })
         .catch(function () {
           toast("Could not reach the server");
           refreshBtn.disabled = false;
           refreshBtn.textContent = "Refresh";
+          wasRunning = false;
+          syncPolling();
         });
     });
-    // A run kicked off elsewhere (CLI, systemd timer) should still update here.
-    if (refreshBtn.disabled) { if (dot) dot.classList.add("busy"); poll(); }
+    if (refreshBtn.disabled) {
+      if (dot) dot.classList.add("busy");
+      wasRunning = true;
+    }
   }
+
+  syncPolling();
+  if (verbose || wasRunning) fetchStatus();
 
   /* ── keyboard shortcuts ────────────────────────────────────── */
   document.addEventListener("keydown", function (ev) {

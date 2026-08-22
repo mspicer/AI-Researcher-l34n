@@ -181,6 +181,83 @@ nav.tabs a.on::after {
   box-shadow: var(--glow-magenta);
 }
 
+/* ── verbose ingest toggle + live strip ──────────────────────── */
+.verbose-toggle {
+  display: flex; align-items: center; gap: 8px; cursor: pointer;
+  user-select: none; flex: none; margin-left: 4px;
+}
+.verbose-toggle input {
+  position: absolute; opacity: 0; width: 1px; height: 1px; pointer-events: none;
+}
+.verbose-toggle .switch {
+  position: relative; width: 34px; height: 18px; flex: none;
+  border-radius: 999px; background: var(--bg-sink);
+  border: 1px solid var(--border-hi);
+  box-shadow: inset 0 0 8px rgba(0,0,0,.45);
+  transition: background .15s, border-color .15s, box-shadow .15s;
+}
+.verbose-toggle .switch::after {
+  content: ""; position: absolute; top: 2px; left: 2px;
+  width: 12px; height: 12px; border-radius: 50%;
+  background: var(--text-dim);
+  transition: transform .15s, background .15s, box-shadow .15s;
+}
+.verbose-toggle input:checked + .switch {
+  background: rgba(0,240,255,.16); border-color: var(--cyan);
+  box-shadow: inset 0 0 10px rgba(0,240,255,.18), 0 0 10px rgba(0,240,255,.2);
+}
+.verbose-toggle input:checked + .switch::after {
+  transform: translateX(16px); background: var(--cyan);
+  box-shadow: 0 0 8px rgba(0,240,255,.7);
+}
+.verbose-toggle:focus-within .switch {
+  outline: 2px solid var(--cyan); outline-offset: 2px;
+}
+.verbose-label {
+  font: 600 10px var(--mono); letter-spacing: .08em; text-transform: uppercase;
+  color: var(--text-dim); white-space: nowrap;
+}
+.verbose-toggle input:checked ~ .verbose-label { color: var(--cyan); }
+
+.ingest-status {
+  position: sticky; top: 54px; z-index: 49;
+  display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+  padding: 8px 20px;
+  background: linear-gradient(180deg, rgba(8,8,24,.96), rgba(6,6,18,.9));
+  border-bottom: 1px solid var(--border);
+  box-shadow: 0 1px 0 rgba(0,240,255,.18);
+  font: 12px/1.4 var(--mono); color: var(--text-mid);
+}
+.ingest-status[hidden] { display: none !important; }
+.ingest-status.live {
+  box-shadow: 0 1px 0 rgba(255,182,39,.35), 0 8px 22px rgba(0,0,0,.45);
+}
+.ingest-stage {
+  flex: none; padding: 2px 8px; border-radius: var(--radius-sm);
+  border: 1px solid rgba(0,240,255,.35); color: var(--cyan);
+  letter-spacing: .1em; text-transform: uppercase; font-weight: 700; font-size: 10px;
+  background: rgba(0,240,255,.08);
+}
+.ingest-status.live .ingest-stage {
+  border-color: rgba(255,182,39,.55); color: var(--amber);
+  background: rgba(255,182,39,.1);
+  animation: pulse 1.1s ease-in-out infinite;
+}
+.ingest-detail { color: var(--text); min-width: 0; }
+.ingest-current {
+  color: var(--text-dim); min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 42vw;
+}
+.ingest-current:not([hidden])::before { content: "·"; margin-right: 10px; color: var(--border-hi); }
+.ingest-counts {
+  margin-left: auto; flex: none; color: var(--cyan);
+  font-variant-numeric: tabular-nums; letter-spacing: .06em;
+}
+@media (max-width: 1100px) {
+  .verbose-label { display: none; }
+  .ingest-counts { margin-left: 0; }
+}
+
 /* ── layout ──────────────────────────────────────────────────── */
 .wrap { max-width: 1500px; margin: 0 auto; padding: 22px 20px 40px; position: relative; z-index: 1; }
 .cols { display: grid; grid-template-columns: minmax(0,1fr) 330px; gap: 20px; align-items: start; }
