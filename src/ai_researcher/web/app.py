@@ -18,6 +18,7 @@ from markdown_it import MarkdownIt
 from ..config import CATEGORY_LABELS, Settings
 from ..db import Database
 from ..pipeline import Pipeline, sync_sources
+from ..progress import RunProgress
 from ..trends import rising_topics, top_entities
 from ..util import iso, local_day, utcnow
 from . import queries as Q
@@ -31,27 +32,37 @@ MD = MarkdownIt("commonmark", {"breaks": True, "linkify": True})
 class RunState:
     """Guards against two ingest runs overlapping."""
 
-    def __init__(self) -> None:
+    def __init__(self, progress: RunProgress) -> None:
         self.lock = asyncio.Lock()
         self.running = False
         self.started_at: str = ""
         self.last_result: dict[str, Any] = {}
+        self.progress = progress
 
     @property
     def status(self) -> dict[str, Any]:
+        # Prefer the in-memory snapshot when this process owns the run; fall
+        # back to the sidecar so a CLI/systemd ingest still surfaces live detail.
+        progress = self.progress.snapshot()
+        if not progress.get("running") and not self.running:
+            disk = RunProgress.load(self.progress._path) if self.progress._path else {}
+            if disk.get("running"):
+                progress = disk
         return {
-            "running": self.running,
+            "running": self.running or bool(progress.get("running")),
             "started_at": self.started_at,
             "last_result": self.last_result,
+            "progress": progress,
         }
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings.load()
     db = Database(settings.db_path)
-    pipeline = Pipeline(settings, db)
+    progress = RunProgress(settings.data_dir / "ingest.progress.json")
+    pipeline = Pipeline(settings, db, progress=progress)
     sync_sources(db, pipeline.sources)
-    state = RunState()
+    state = RunState(progress)
 
     auto_refresh_min = int(os.environ.get("AIR_AUTO_REFRESH_MIN", "0") or 0)
 

@@ -24,6 +24,7 @@ from typing import Any
 
 from ..config import CATEGORIES, Settings
 from ..db import Database, jdump
+from ..progress import RunProgress
 from ..util import iso, truncate, utcnow
 from . import heuristics as H
 from .ollama import OllamaClient
@@ -68,15 +69,31 @@ and opinion."""
 
 
 class Enricher:
-    def __init__(self, settings: Settings, db: Database, client: OllamaClient):
+    def __init__(
+        self,
+        settings: Settings,
+        db: Database,
+        client: OllamaClient,
+        progress: RunProgress | None = None,
+    ):
         self.settings = settings
         self.db = db
         self.client = client
+        self.progress = progress
         # Ollama serialises generation per model, so a wide pool just builds a
         # queue of requests that each time out. Two keeps the runner fed.
         self._gate = asyncio.Semaphore(2)
 
     async def run(self, limit: int | None = None) -> dict[str, Any]:
+        if self.progress:
+            self.progress.update(
+                stage="enrich",
+                detail="Heuristic pass — classifying every new item",
+                current="",
+                done=0,
+                total=0,
+                active=[],
+            )
         heuristic_count = self._heuristic_pass()
 
         llm_ready = await self.client.probe()
@@ -179,6 +196,16 @@ class Enricher:
         time_budget = float(self.settings.enrich_time_budget)
         started = time.monotonic()
         promoted = 0
+        total = len(rows)
+        if self.progress:
+            self.progress.update(
+                stage="enrich",
+                detail=f"Model pass · 0/{total}",
+                current="",
+                done=0,
+                total=total,
+                active=[],
+            )
 
         # Sequential-ish with a small pool. Each result is committed as it
         # lands, so hitting the time budget still keeps everything done so far.
@@ -195,9 +222,26 @@ class Enricher:
                     return
                 if time.monotonic() - started > time_budget:
                     return
+                title = (row["title"] or "")[:80]
+                if self.progress:
+                    self.progress.update(
+                        stage="enrich",
+                        detail=f"Model pass · {promoted}/{total}",
+                        current=title,
+                        done=promoted,
+                        total=total,
+                    )
                 try:
                     if await self._promote(row):
                         promoted += 1
+                        if self.progress:
+                            self.progress.update(
+                                stage="enrich",
+                                detail=f"Model pass · {promoted}/{total}",
+                                current=title,
+                                done=promoted,
+                                total=total,
+                            )
                 except Exception as exc:  # noqa: BLE001
                     log.debug("model enrichment failed for %s: %s", row["id"], exc)
 

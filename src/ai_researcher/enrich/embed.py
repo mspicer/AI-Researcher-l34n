@@ -17,6 +17,7 @@ import logging
 import numpy as np
 
 from ..db import Database
+from ..progress import RunProgress
 from ..util import truncate
 from .ollama import OllamaClient
 
@@ -26,9 +27,15 @@ BATCH = 16
 
 
 class Embedder:
-    def __init__(self, db: Database, client: OllamaClient):
+    def __init__(
+        self,
+        db: Database,
+        client: OllamaClient,
+        progress: RunProgress | None = None,
+    ):
         self.db = db
         self.client = client
+        self.progress = progress
 
     @property
     def model(self) -> str:
@@ -36,6 +43,15 @@ class Embedder:
 
     async def run(self, limit: int = 2000) -> dict[str, int]:
         if not await self.client.probe() or not self.client.embed_model:
+            if self.progress:
+                self.progress.update(
+                    stage="embed",
+                    detail="No embedding model — clustering will use TF-IDF",
+                    current="",
+                    done=0,
+                    total=0,
+                    active=[],
+                )
             return {"embedded": 0, "skipped": 1}
 
         model = self.client.embed_model
@@ -54,10 +70,29 @@ class Embedder:
         if not rows:
             return {"embedded": 0}
 
+        total = len(rows)
+        if self.progress:
+            self.progress.update(
+                stage="embed",
+                detail=f"Embedding · 0/{total}",
+                current=model,
+                done=0,
+                total=total,
+                active=[],
+            )
+
         embedded = 0
         failures = 0
         for start in range(0, len(rows), BATCH):
             chunk = rows[start:start + BATCH]
+            if self.progress:
+                self.progress.update(
+                    stage="embed",
+                    detail=f"Embedding · {embedded}/{total}",
+                    current=(chunk[0]["title"] or "")[:80] or model,
+                    done=embedded,
+                    total=total,
+                )
             texts = [
                 truncate(f"{r['title']}. {r['summary']}".strip(), 1000) or r["title"] or " "
                 for r in chunk
