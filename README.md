@@ -13,6 +13,11 @@ No API keys are required, nothing is sent to a third party, and the summariser
 is a local Ollama model. Every optional piece degrades to a working fallback.
 
 ![The dashboard](docs/screenshot.png)
+![The dashboard](docs/firehose.png)
+![The dashboard](docs/search.png)
+![The dashboard](docs/saved.png)
+![The dashboard](docs/sources.png)
+![The dashboard](docs/runs.png)
 
 ## Quick start
 
