@@ -22,19 +22,25 @@ jobs:
         with:
           enable-cache: true
 
-      - name: Set up Python ${{ matrix.python-version }}
-        run: uv python install ${{ matrix.python-version }}
+      # A venv rather than `--system`: the runner's system interpreter is
+      # externally managed (PEP 668), and installing into it also ignores the
+      # matrix version, so every job would silently test the same Python.
+      - name: Create venv on Python ${{ matrix.python-version }}
+        run: uv venv --python ${{ matrix.python-version }}
 
       - name: Install project
-        run: uv pip install --system -e ".[dev]"
+        run: uv pip install -e ".[dev]"
+
+      - name: Confirm the interpreter matches the matrix
+        run: uv run python -c "import sys; print(sys.version)"
 
       # The suite must pass with no Ollama, no API keys, and no network.
       # Every optional dependency has a documented fallback; if a test needs
       # one of them, that is the bug.
       - name: Run tests
-        run: python -m pytest
+        run: uv run python -m pytest
 
       - name: Check the CLI loads and reports honestly
         run: |
-          python -m ai_researcher.cli --help
-          ai-researcher sources | head -20
+          uv run python -m ai_researcher.cli --help
+          uv run ai-researcher sources
