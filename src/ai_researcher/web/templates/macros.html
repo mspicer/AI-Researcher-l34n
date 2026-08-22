@@ -1,0 +1,79 @@
+{# Shared renderers. Kept in one place so a story item and a firehose row
+   never drift apart visually. #}
+
+{% macro badge(category, label) -%}
+<span class="badge c-{{ category }}">{{ label }}</span>
+{%- endmacro %}
+
+{% macro savebtn(item) -%}
+<button class="save {{ 'on' if item.is_saved }}" data-id="{{ item.id }}"
+        title="{{ 'Saved' if item.is_saved else 'Save' }}"
+        aria-label="save">{{ '★' if item.is_saved else '☆' }}</button>
+{%- endmacro %}
+
+{# One row in the firehose / search / saved lists. #}
+{% macro item_row(item) -%}
+<div class="item">
+  <div class="imp {{ 'hi' if item.importance >= 0.7 }}">{{ '%.2f'|format(item.importance) }}</div>
+  <div class="main">
+    <h4><a href="{{ item.url }}" target="_blank" rel="noopener">{{ item.title }}</a></h4>
+    {% if item.summary %}<p class="sum">{{ item.summary }}</p>{% endif %}
+    <div class="meta">
+      {{ badge(item.category, item.category_label) }}
+      <span class="src">{{ item.source_name }}</span>
+      <span class="dotsep"></span><span>{{ item.age }}</span>
+      {% if item.domain %}<span class="dotsep"></span><span>{{ item.domain }}</span>{% endif %}
+      {% if item.engagement %}<span class="pill">▲ {{ item.engagement }}</span>{% endif %}
+      {% if item.comments %}<span class="pill">💬 {{ item.comments }}</span>{% endif %}
+      {% if item.discussion_url and item.discussion_url != item.url %}
+        <a href="{{ item.discussion_url }}" target="_blank" rel="noopener">discussion</a>
+      {% endif %}
+      {% for e in item.entities[:4] %}
+        <a class="pill" href="/search?q={{ e|urlencode }}">{{ e }}</a>
+      {% endfor %}
+    </div>
+  </div>
+  {{ savebtn(item) }}
+</div>
+{%- endmacro %}
+
+{# A clustered story: the primary item plus everything else covering it. #}
+{% macro story_card(story, rank) -%}
+<article class="story {{ 'hot' if story.source_count >= 3 }}">
+  <div class="story-head">
+    <span class="rank">{{ rank }}</span>
+    <h3><a href="{{ story.primary.url }}" target="_blank" rel="noopener">{{ story.label }}</a></h3>
+    {{ savebtn(story.primary) }}
+  </div>
+
+  {% if story.summary %}<p class="sum">{{ story.summary }}</p>{% endif %}
+  {% if story.primary.why %}<p class="why">{{ story.primary.why }}</p>{% endif %}
+
+  <div class="meta">
+    {{ badge(story.category, story.category_label) }}
+    {% if story.source_count > 1 %}
+      <span class="pill corr">{{ story.source_count }} sources</span>
+    {% else %}
+      <span class="src">{{ story.primary.source_name }}</span>
+    {% endif %}
+    <span class="dotsep"></span><span>{{ story.age }}</span>
+    {% for e in story.entities[:5] %}
+      <a class="pill" href="/search?q={{ e|urlencode }}">{{ e }}</a>
+    {% endfor %}
+  </div>
+
+  {% if story.others %}
+  <details class="others">
+    <summary>{{ story.others|length }} more {{ 'report' if story.others|length == 1 else 'reports' }}</summary>
+    <ul>
+      {% for o in story.others %}
+      <li>
+        <a href="{{ o.url }}" target="_blank" rel="noopener">{{ o.title }}</a>
+        <span class="o-src">{{ o.source_name }} · {{ o.age }}</span>
+      </li>
+      {% endfor %}
+    </ul>
+  </details>
+  {% endif %}
+</article>
+{%- endmacro %}

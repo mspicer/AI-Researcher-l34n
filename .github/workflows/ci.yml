@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.11 is the floor declared in pyproject; 3.13 catches deprecations early.
+        python-version: ["3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Install project
+        run: uv pip install --system -e ".[dev]"
+
+      # The suite must pass with no Ollama, no API keys, and no network.
+      # Every optional dependency has a documented fallback; if a test needs
+      # one of them, that is the bug.
+      - name: Run tests
+        run: python -m pytest
+
+      - name: Check the CLI loads and reports honestly
+        run: |
+          python -m ai_researcher.cli --help
+          ai-researcher sources | head -20

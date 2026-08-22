@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}AI Researcher{% endblock %}</title>
+<link rel="stylesheet" href="/static/app.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>📡</text></svg>">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="dot {{ 'busy' if run_state.running else ('bad' if stats.sources_failing > stats.sources_ok else '') }}"
+          id="statusdot" title="{{ 'ingest running' if run_state.running else stats.last_run_status }}"></span>
+    AI&nbsp;Researcher
+  </div>
+  <nav class="tabs">
+    <a href="/"        class="{{ 'on' if page=='dashboard' }}">Dashboard</a>
+    <a href="/feed"    class="{{ 'on' if page=='feed' }}">Firehose</a>
+    <a href="/search"  class="{{ 'on' if page=='search' }}">Search</a>
+    <a href="/saved"   class="{{ 'on' if page=='saved' }}">Saved{% if stats.saved %} ({{ stats.saved }}){% endif %}</a>
+    <a href="/sources" class="{{ 'on' if page=='sources' }}">Sources</a>
+    <a href="/runs"    class="{{ 'on' if page=='runs' }}">Runs</a>
+  </nav>
+  <div class="topstats">
+    <span><b>{{ stats.items_24h }}</b> items/24h</span>
+    <span><b>{{ stats.stories_today }}</b> stories</span>
+    <span title="{{ stats.sources_failing }} failing"><b>{{ stats.sources_ok }}</b>/{{ stats.sources_total }} sources</span>
+    <span id="lastrun">{{ stats.last_run }}</span>
+  </div>
+  <button class="btn" id="refresh" {{ 'disabled' if run_state.running }}>
+    {{ 'Refreshing…' if run_state.running else 'Refresh' }}
+  </button>
+</header>
+
+<main class="wrap">{% block content %}{% endblock %}</main>
+<div class="toast" id="toast"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

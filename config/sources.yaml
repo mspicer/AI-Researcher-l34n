@@ -1,0 +1,214 @@
+# Source catalog for the AI research dashboard.
+#
+# kind:            which connector handles it (rss, reddit, hackernews, arxiv,
+#                  hf_papers, hf_models, github_releases, github_trending, x)
+# tier:            lab | vendor | news | research | community | analyst | infra
+# weight:          trust/importance multiplier applied to every item's score.
+#                  2.0 = primary source (a lab announcing its own model),
+#                  1.0 = ordinary, 0.6 = high-volume/low-signal.
+# category_hint:   nudges the classifier when a source is topically narrow.
+# enabled:         set false to keep a source catalogued but dormant.
+#
+# Feeds do break. `ai-researcher sources` shows per-source health, and a source
+# that fails is skipped without failing the run.
+
+defaults:
+  weight: 1.0
+  enabled: true
+
+sources:
+  # ─────────────────────────── frontier labs ───────────────────────────
+  - {key: openai-news,      name: OpenAI News,           kind: rss, tier: lab, weight: 2.2, category_hint: model-release, url: "https://openai.com/news/rss.xml"}
+  - {key: deepmind-blog,    name: Google DeepMind,       kind: rss, tier: lab, weight: 2.2, category_hint: research, url: "https://deepmind.google/blog/rss.xml"}
+  - {key: google-research,  name: Google Research,       kind: rss, tier: lab, weight: 1.8, category_hint: research, url: "https://research.google/blog/rss/"}
+  - {key: msft-research,    name: Microsoft Research,    kind: rss, tier: lab, weight: 1.7, category_hint: research, url: "https://www.microsoft.com/en-us/research/feed/"}
+  - {key: mistral-news,     name: Mistral AI,            kind: rss, tier: lab, weight: 2.0, category_hint: model-release, url: "https://mistral.ai/news/rss"}
+  - {key: ai2-blog,         name: Allen Institute (AI2), kind: rss, tier: lab, weight: 1.7, category_hint: research, url: "https://allenai.org/rss.xml"}
+  - {key: apple-ml,         name: Apple Machine Learning,kind: rss, tier: lab, weight: 1.6, category_hint: research, url: "https://machinelearning.apple.com/rss.xml"}
+  - {key: nvidia-blog,      name: NVIDIA Blog,           kind: rss, tier: vendor, weight: 1.6, url: "https://blogs.nvidia.com/feed/"}
+  - {key: nvidia-dev,       name: NVIDIA Developer,      kind: rss, tier: vendor, weight: 1.3, category_hint: infrastructure-compute, url: "https://developer.nvidia.com/blog/feed"}
+
+  # ─────────────────────── platforms & tool vendors ────────────────────
+  - {key: hf-blog,          name: Hugging Face Blog,     kind: rss, tier: vendor, weight: 1.7, url: "https://huggingface.co/blog/feed.xml"}
+  - {key: aws-ml,           name: AWS Machine Learning,  kind: rss, tier: vendor, weight: 1.2, url: "https://aws.amazon.com/blogs/machine-learning/feed/"}
+  - {key: databricks,       name: Databricks,            kind: rss, tier: vendor, weight: 1.3, url: "https://www.databricks.com/blog/feed.xml"}
+  - {key: together-ai,      name: Together AI,           kind: rss, tier: vendor, weight: 1.3, url: "https://www.together.ai/blog/rss.xml"}
+  - {key: langchain,        name: LangChain,             kind: rss, tier: vendor, weight: 1.2, category_hint: tooling-oss, url: "https://blog.langchain.dev/rss.xml"}
+  - {key: modal-blog,       name: Modal,                 kind: rss, tier: vendor, weight: 1.1, category_hint: infrastructure-compute, url: "https://modal.com/blog/atom.xml"}
+  - {key: replicate,        name: Replicate,             kind: rss, tier: vendor, weight: 1.1, url: "https://replicate.com/blog/rss"}
+  - {key: pytorch-blog,     name: PyTorch,               kind: rss, tier: vendor, weight: 1.4, category_hint: tooling-oss, url: "https://pytorch.org/blog/feed.xml"}
+  - {key: vercel-ai,        name: Vercel AI,             kind: rss, tier: vendor, weight: 1.0, url: "https://vercel.com/atom"}
+
+  # ── vendors with no RSS feed of their own ──
+  # Verified: anthropic.com, ai.meta.com, cohere.com, elevenlabs.io,
+  # runwayml.com and llamaindex.ai publish no feed. A Google News `site:`
+  # search returns their posts as RSS. Scope to the blog path wherever one is
+  # indexed — a bare domain search drags in careers pages, API reference stubs
+  # and legal boilerplate, which the connector then has to filter out.
+  # Links are Google redirect wrappers (the true URL needs a JS client), so the
+  # connector records the real publisher separately for display.
+  - {key: gn-anthropic, name: Anthropic, kind: gnews, tier: lab, weight: 2.2, category_hint: model-release, config: {query: "site:anthropic.com/news", days: 21}}
+  - {key: gn-metaai,    name: Meta AI,   kind: gnews, tier: lab, weight: 1.9, config: {query: "site:ai.meta.com/blog", days: 30}}
+  - {key: gn-cohere,    name: Cohere,    kind: gnews, tier: lab, weight: 1.5, config: {query: "site:cohere.com/blog", days: 30}}
+  - {key: gn-elevenlabs,name: ElevenLabs,kind: gnews, tier: vendor, weight: 1.2, config: {query: "site:elevenlabs.io/blog", days: 30}}
+  - {key: gn-llamaindex,name: LlamaIndex,kind: gnews, tier: vendor, weight: 1.1, category_hint: tooling-oss, config: {query: "site:llamaindex.ai/blog", days: 30}}
+  # No blog path is indexed for these two, so they run domain-wide and lean on
+  # the connector's non-article filter.
+  - {key: gn-runway,    name: Runway,    kind: gnews, tier: vendor, weight: 1.2, config: {query: "site:runwayml.com", days: 30, min_title_words: 4}}
+  - {key: gn-importai,  name: Import AI, kind: gnews, tier: analyst, weight: 1.5, config: {query: "\"Import AI\" Jack Clark newsletter", days: 30}}
+
+  # ──────────────────────────── news outlets ───────────────────────────
+  - {key: techmeme,         name: Techmeme,              kind: rss, tier: news, weight: 1.5, url: "https://www.techmeme.com/feed.xml"}
+  - {key: tc-ai,            name: TechCrunch AI,         kind: rss, tier: news, weight: 1.3, url: "https://techcrunch.com/category/artificial-intelligence/feed/"}
+  - {key: verge-ai,         name: The Verge AI,          kind: rss, tier: news, weight: 1.2, url: "https://www.theverge.com/rss/ai-artificial-intelligence/index.xml"}
+  - {key: ars-ai,           name: Ars Technica AI,       kind: rss, tier: news, weight: 1.3, url: "https://arstechnica.com/ai/feed/"}
+  - {key: vb-ai,            name: VentureBeat AI,        kind: rss, tier: news, weight: 1.0, url: "https://venturebeat.com/category/ai/feed/"}
+  - {key: mit-tr-ai,        name: MIT Tech Review AI,    kind: rss, tier: news, weight: 1.4, url: "https://www.technologyreview.com/topic/artificial-intelligence/feed"}
+  - {key: wired-ai,         name: WIRED AI,              kind: rss, tier: news, weight: 1.1, url: "https://www.wired.com/feed/tag/ai/latest/rss"}
+  - {key: the-decoder,      name: The Decoder,           kind: rss, tier: news, weight: 1.1, url: "https://the-decoder.com/feed/"}
+  - {key: crunchbase-news,  name: Crunchbase News,       kind: rss, tier: news, weight: 1.2, category_hint: funding-acquisition, url: "https://news.crunchbase.com/feed/"}
+  - {key: mit-news-ai,      name: MIT News AI,           kind: rss, tier: news, weight: 1.1, url: "https://news.mit.edu/rss/topic/artificial-intelligence2"}
+
+  # ─────────────────── analysts, researchers, newsletters ──────────────
+  - {key: simonw,           name: Simon Willison,        kind: rss, tier: analyst, weight: 1.8, url: "https://simonwillison.net/atom/everything/"}
+  - {key: interconnects,    name: Interconnects,         kind: rss, tier: analyst, weight: 1.7, url: "https://www.interconnects.ai/feed"}
+  - {key: lilianweng,       name: "Lil'Log",             kind: rss, tier: analyst, weight: 1.6, category_hint: research, url: "https://lilianweng.github.io/index.xml"}
+  - {key: raschka,          name: Sebastian Raschka,     kind: rss, tier: analyst, weight: 1.5, url: "https://magazine.sebastianraschka.com/feed"}
+  - {key: ai-snake-oil,     name: AI Snake Oil,          kind: rss, tier: analyst, weight: 1.3, category_hint: opinion-analysis, url: "https://www.aisnakeoil.com/feed"}
+  - {key: the-gradient,     name: The Gradient,          kind: rss, tier: analyst, weight: 1.2, url: "https://thegradient.pub/rss/"}
+  - {key: huyenchip,        name: Chip Huyen,            kind: rss, tier: analyst, weight: 1.4, url: "https://huyenchip.com/feed.xml"}
+  - {key: eugeneyan,        name: Eugene Yan,            kind: rss, tier: analyst, weight: 1.3, url: "https://eugeneyan.com/rss/"}
+  - {key: answerai,         name: Answer.AI,             kind: rss, tier: analyst, weight: 1.4, url: "https://www.answer.ai/index.xml"}
+  - {key: hamel,            name: Hamel Husain,          kind: rss, tier: analyst, weight: 1.2, url: "https://hamel.dev/index.xml"}
+  - {key: bair,             name: Berkeley BAIR,         kind: rss, tier: research, weight: 1.4, category_hint: research, url: "https://bair.berkeley.edu/blog/feed.xml"}
+  - {key: stanford-ai,      name: Stanford AI Lab,       kind: rss, tier: research, weight: 1.4, category_hint: research, url: "https://ai.stanford.edu/blog/feed.xml"}
+  - {key: cmu-ml,           name: CMU ML Blog,           kind: rss, tier: research, weight: 1.3, category_hint: research, url: "https://blog.ml.cmu.edu/feed/"}
+
+  # ──────────────────────────── research feeds ─────────────────────────
+  - key: arxiv-core
+    name: arXiv (AI/ML/NLP/CV)
+    kind: arxiv
+    tier: research
+    weight: 1.3
+    category_hint: research
+    config:
+      categories: [cs.AI, cs.CL, cs.LG, cs.CV, cs.MA, cs.NE, cs.IR, stat.ML]
+      max_results: 120
+
+  - key: hf-papers
+    name: Hugging Face Daily Papers
+    kind: hf_papers
+    tier: research
+    weight: 1.8
+    category_hint: research
+    config: {days: 3}
+
+  # ────────────────────── model & release tracking ─────────────────────
+  - key: hf-models
+    name: Hugging Face Trending Models
+    kind: hf_models
+    tier: research
+    weight: 1.6
+    category_hint: model-release
+    config: {limit: 60, min_downloads: 200}
+
+  - key: gh-releases
+    name: GitHub Releases (key AI repos)
+    kind: github_releases
+    tier: infra
+    weight: 1.4
+    category_hint: tooling-oss
+    config:
+      repos:
+        - ggml-org/llama.cpp
+        - vllm-project/vllm
+        - sgl-project/sglang
+        - huggingface/transformers
+        - ollama/ollama
+        - open-webui/open-webui
+        - comfyanonymous/ComfyUI
+        - unslothai/unsloth
+        - pytorch/pytorch
+        - langchain-ai/langchain
+        - run-llama/llama_index
+        - BerriAI/litellm
+        - anthropics/claude-code
+        - openai/openai-python
+        - anthropics/anthropic-sdk-python
+        - modelcontextprotocol/servers
+        - microsoft/autogen
+        - crewAIInc/crewAI
+        - exo-explore/exo
+        - Aider-AI/aider
+        - ggml-org/whisper.cpp
+        - facebookresearch/faiss
+        - qdrant/qdrant
+        - weaviate/weaviate
+
+  - key: gh-trending
+    name: GitHub Trending (AI topics)
+    kind: github_trending
+    tier: infra
+    weight: 1.2
+    category_hint: tooling-oss
+    config:
+      topics: [llm, ai-agents, rag, machine-learning, generative-ai, mcp]
+      days: 7
+      min_stars: 120
+
+  # ────────────────────────────── community ────────────────────────────
+  - key: hackernews
+    name: Hacker News
+    kind: hackernews
+    tier: community
+    weight: 1.4
+    config:
+      queries: [AI, LLM, "language model", OpenAI, Anthropic, "machine learning", GPU, agents]
+      min_points: 40
+
+  # Reddit's JSON API is 403 for unauthenticated clients since the
+  # Responsible Builder Policy, so this runs on the public Atom feeds, which
+  # tolerate roughly one request per minute. The connector therefore rotates:
+  # `per_run` subreddits per run, resuming where the last run stopped. At one
+  # run per hour the full list below cycles about every 3-4 hours.
+  # Raise per_run only if you also raise delay_seconds.
+  - key: reddit
+    name: Reddit
+    kind: reddit
+    tier: community
+    weight: 1.0
+    config:
+      min_score: 25          # only applies on the authenticated path
+      per_run: 4
+      delay_seconds: 75
+      subreddits:
+        - {name: LocalLLaMA,      weight: 1.5}
+        - {name: MachineLearning, weight: 1.4}
+        - {name: singularity,     weight: 0.7}
+        - {name: OpenAI,          weight: 0.9}
+        - {name: ClaudeAI,        weight: 0.9}
+        - {name: artificial,      weight: 0.8}
+        - {name: LLMDevs,         weight: 1.0}
+        - {name: AI_Agents,       weight: 0.9}
+        - {name: StableDiffusion, weight: 0.9}
+        - {name: comfyui,         weight: 0.8}
+        - {name: deeplearning,    weight: 0.9}
+        - {name: mlops,           weight: 0.9}
+        - {name: ChatGPTCoding,   weight: 0.8}
+
+  # ────────────────── X / Twitter (needs X_BEARER_TOKEN) ───────────────
+  # Auto-disables when the token is absent. Requires a paid X API tier.
+  - key: x-accounts
+    name: X / Twitter
+    kind: x
+    tier: community
+    weight: 1.2
+    config:
+      max_results_per_query: 50
+      min_likes: 60
+      # Each query is one X API v2 recent-search expression.
+      queries:
+        - "(from:AnthropicAI OR from:OpenAI OR from:GoogleDeepMind OR from:MistralAI OR from:AIatMeta) -is:retweet"
+        - "(from:karpathy OR from:ylecun OR from:sama OR from:demishassabis OR from:jeffdean) -is:retweet"
+        - "(from:simonw OR from:_akhaliq OR from:natolambert OR from:swyx OR from:rasbt) -is:retweet"
+        - "(\"model release\" OR \"we're releasing\" OR \"open sourcing\") (LLM OR \"language model\") -is:retweet lang:en"

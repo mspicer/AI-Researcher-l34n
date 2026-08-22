@@ -1,0 +1,14 @@
+[Unit]
+Description=Hourly AI Researcher ingest
+Documentation=file:%h/AI-Researcher/README.md
+
+[Timer]
+# First run shortly after login, then hourly. The randomised delay keeps every
+# source from being hit exactly on the hour after a reboot.
+OnBootSec=3min
+OnUnitActiveSec=1h
+RandomizedDelaySec=4min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

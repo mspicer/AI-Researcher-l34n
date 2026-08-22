@@ -1,0 +1,28 @@
+[Unit]
+Description=AI Researcher dashboard
+Documentation=file:%h/AI-Researcher/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+WorkingDirectory=%h/AI-Researcher
+ExecStart=%h/AI-Researcher/.venv/bin/ai-researcher serve
+Restart=on-failure
+RestartSec=10
+
+# Ollama can be slow to answer during a model load; don't kill mid-generation.
+TimeoutStopSec=30
+
+# Modest hardening. The service only needs its own directory and the network.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/AI-Researcher/data
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=default.target

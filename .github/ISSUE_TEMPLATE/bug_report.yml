@@ -1,0 +1,38 @@
+name: Bug report
+description: Something is broken or behaving differently than documented
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you got instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of `ai-researcher doctor`
+      description: >
+        This is the fastest way to show the state of the install. It reports no
+        secrets — only whether each credential is set. Paste it as-is.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log output
+      description: >
+        From `ai-researcher --log debug run`, or
+        `journalctl --user -u ai-researcher-ingest.service -n 100` if you run it
+        under systemd.
+      render: text
+
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+      placeholder: "git rev-parse --short HEAD"

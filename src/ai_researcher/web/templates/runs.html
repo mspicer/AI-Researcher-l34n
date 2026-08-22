@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Runs — AI Researcher{% endblock %}
+
+{% block content %}
+<section class="panel">
+  <h3><span>Ingest history</span><span>last {{ runs|length }}</span></h3>
+  <table>
+    <thead>
+      <tr>
+        <th class="num">#</th><th>Started</th><th>Status</th><th class="num">Secs</th>
+        <th class="num">New</th><th class="num">Enriched</th><th class="num">Stories</th>
+        <th class="num">Src ok</th><th class="num">Src fail</th><th>Errors</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in runs %}
+      <tr>
+        <td class="num">{{ r.id }}</td>
+        <td title="{{ r.started_at }}">{{ r.started }}</td>
+        <td><span class="st {{ r.status if r.status in ('ok', 'running') else 'error' }}">{{ r.status }}</span></td>
+        <td class="num">{{ r.elapsed_s or '—' }}</td>
+        <td class="num">{{ r.new_items }}</td>
+        <td class="num">{{ r.enriched }}</td>
+        <td class="num">{{ r.clusters }}</td>
+        <td class="num">{{ r.sources_ok }}</td>
+        <td class="num">{{ r.sources_failed }}</td>
+        <td class="err">
+          {% if r.error %}{{ r.error[:70] }}{% endif %}
+          {% for e in r.errors[:2] %}<div>{{ e[:70] }}</div>{% endfor %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

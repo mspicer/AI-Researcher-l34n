@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% from "macros.html" import item_row %}
+{% block title %}{{ 'Saved' if saved_view else 'Firehose' }} — AI Researcher{% endblock %}
+
+{% block content %}
+{% if not saved_view %}
+<form class="filters" method="get" action="/feed">
+  <select name="hours">
+    {% for h, lab in [(6,'6 hours'),(24,'24 hours'),(48,'2 days'),(168,'7 days'),(720,'30 days')] %}
+      <option value="{{ h }}" {{ 'selected' if hours == h }}>{{ lab }}</option>
+    {% endfor %}
+  </select>
+  <select name="category">
+    <option value="">All categories</option>
+    {% for c in categories %}
+      <option value="{{ c.key }}" {{ 'selected' if active_category == c.key }}>{{ c.label }}</option>
+    {% endfor %}
+  </select>
+  <select name="source">
+    <option value="">All sources</option>
+    {% for s in sources %}
+      <option value="{{ s.key }}" {{ 'selected' if active_source == s.key }}>{{ s.name }}</option>
+    {% endfor %}
+  </select>
+  <select name="order">
+    {% for o, lab in [('recent','Newest'),('important','Most important'),('engagement','Most engaged')] %}
+      <option value="{{ o }}" {{ 'selected' if order == o }}>{{ lab }}</option>
+    {% endfor %}
+  </select>
+  <button class="btn primary" type="submit">Apply</button>
+</form>
+{% endif %}
+
+<section class="panel">
+  <h3><span>{{ 'Saved items' if saved_view else 'All items' }}</span><span>{{ items|length }} shown</span></h3>
+  {% if items %}
+    {% for i in items %}{{ item_row(i) }}{% endfor %}
+  {% else %}
+    <div class="empty">
+      <h3>Nothing matches</h3>
+      <p>{{ 'Star an item to keep it here.' if saved_view else 'Try a wider time window or clear a filter.' }}</p>
+    </div>
+  {% endif %}
+</section>
+
+{% if not saved_view and (page_num > 1 or has_more) %}
+<div class="pager">
+  {% if page_num > 1 %}
+    <a class="btn" href="?hours={{ hours }}&order={{ order }}{% if active_category %}&category={{ active_category }}{% endif %}{% if active_source %}&source={{ active_source }}{% endif %}&page={{ page_num - 1 }}">← Previous</a>
+  {% endif %}
+  {% if has_more %}
+    <a class="btn" href="?hours={{ hours }}&order={{ order }}{% if active_category %}&category={{ active_category }}{% endif %}{% if active_source %}&source={{ active_source }}{% endif %}&page={{ page_num + 1 }}">Next →</a>
+  {% endif %}
+</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% from "macros.html" import item_row %}
+{% block title %}Search — AI Researcher{% endblock %}
+
+{% block content %}
+<form class="filters" method="get" action="/search">
+  <input type="search" name="q" value="{{ query }}" autofocus
+         placeholder="Search titles, summaries, and entities…">
+  <button class="btn primary" type="submit">Search</button>
+  {% if not fts %}<span style="color:var(--warn);font-size:12px">
+    FTS5 unavailable — substring matching only</span>{% endif %}
+</form>
+
+{% if query %}
+<section class="panel">
+  <h3><span>Results for “{{ query }}”</span><span>{{ items|length }}</span></h3>
+  {% if items %}
+    {% for i in items %}{{ item_row(i) }}{% endfor %}
+  {% else %}
+    <div class="empty"><h3>No matches</h3><p>Try a shorter or more general term.</p></div>
+  {% endif %}
+</section>
+{% else %}
+<div class="panel empty">
+  <h3>Search everything ingested</h3>
+  <p>Company names, model names, techniques — anything in a title, summary, or entity list.</p>
+</div>
+{% endif %}
+{% endblock %}

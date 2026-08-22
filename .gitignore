@@ -1,0 +1,35 @@
+# ── secrets and local state ──────────────────────────────────────
+# .env holds API tokens. It is never committed; copy .env.example instead.
+.env
+.env.local
+*.env.bak
+
+# The SQLite database, embeddings, and the ingest lock. All regenerable —
+# a fresh clone builds its own on the first `ai-researcher run`.
+data/
+
+# ── python ───────────────────────────────────────────────────────
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# ── editors and OS ───────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ── agent tooling ────────────────────────────────────────────────
+# Per-machine tool permissions, not project configuration.
+.claude/settings.local.json

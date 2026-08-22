@@ -1,0 +1,45 @@
+name: Source suggestion
+description: Propose a blog, feed, or account worth tracking
+labels: [source]
+body:
+  - type: markdown
+    attributes:
+      value: >
+        Most sources can be added with a few lines of YAML and no Python — see
+        CONTRIBUTING.md. A pull request is very welcome, but an issue is fine too.
+
+  - type: input
+    id: name
+    attributes:
+      label: Source name
+    validations:
+      required: true
+
+  - type: input
+    id: feed
+    attributes:
+      label: Feed URL
+      description: >
+        RSS or Atom if one exists. Many sites have one at /feed, /rss.xml, or
+        /atom.xml even when they do not link to it. If there is genuinely no
+        feed, say so and it can go through the Google News connector instead.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: tier
+    attributes:
+      label: Tier
+      options: [lab, vendor, research, news, analyst, community, infra]
+    validations:
+      required: true
+
+  - type: textarea
+    id: why
+    attributes:
+      label: Why it earns a slot
+      description: >
+        What it covers that existing sources do not. Volume and signal matter
+        more than prestige — a feed that posts forty times a day mostly adds noise.
+    validations:
+      required: true

@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% from "macros.html" import story_card, item_row, badge %}
+{% block title %}AI Researcher — {{ day }}{% endblock %}
+
+{% block content %}
+<div class="cols">
+  <div>
+    {# ── the written briefing ── #}
+    <section class="panel brief">
+      <h3>
+        <span>Daily Brief · {{ day }}</span>
+        <span>{% if brief and brief.model %}{{ brief.model }}{% elif brief %}template{% endif %}</span>
+      </h3>
+      <div class="body">
+        {% if brief %}
+          {{ brief.markdown|markdown|safe }}
+          {% if not brief.is_today %}
+            <hr><em>No brief for today yet — showing {{ brief.day }}.</em>
+          {% endif %}
+        {% else %}
+          <p style="color:var(--text-dim)">No brief yet. Run an ingest, then
+          <code>ai-researcher brief</code>.</p>
+        {% endif %}
+      </div>
+    </section>
+
+    {# ── category filter ── #}
+    <div class="chips">
+      <a class="chip {{ 'on' if not active_category }}" href="/">All</a>
+      {% for c in counts %}
+        {% if c.category != 'unclassified' %}
+        <a class="chip {{ 'on' if active_category == c.category }}"
+           href="/?category={{ c.category }}">{{ c.label }}<span class="n">{{ c.count }}</span></a>
+        {% endif %}
+      {% endfor %}
+      <a class="chip {{ 'on' if min_sources > 1 }}"
+         href="/?min_sources={{ 1 if min_sources > 1 else 3 }}{% if active_category %}&category={{ active_category }}{% endif %}"
+         title="Only stories corroborated by 3+ independent sources">Corroborated</a>
+    </div>
+
+    {# ── ranked stories ── #}
+    {% if stories %}
+      {% for s in stories %}{{ story_card(s, loop.index) }}{% endfor %}
+    {% elif fallback_items %}
+      <section class="panel">
+        <h3><span>Latest items</span><span>not yet clustered</span></h3>
+        {% for i in fallback_items %}{{ item_row(i) }}{% endfor %}
+      </section>
+    {% else %}
+      <div class="panel empty">
+        <h3>Nothing here yet</h3>
+        <p>Run <code>ai-researcher run</code> to fetch, or press Refresh above.</p>
+      </div>
+    {% endif %}
+  </div>
+
+  {# ── sidebar ── #}
+  <aside>
+    <section class="panel">
+      <h3><span>Rising</span><span>vs 7-day baseline</span></h3>
+      <div class="body">
+        {% if rising %}
+        <div class="terms">
+          {% for t in rising %}
+          <a class="term {{ 'new' if t.is_new }}" href="/search?q={{ t.term|urlencode }}"
+             title="{{ t.count }} mentions today, baseline {{ t.baseline }}">
+            {{ t.term }}<span class="lift">{{ t.lift }}×</span>
+          </a>
+          {% endfor %}
+        </div>
+        {% else %}
+        <p style="color:var(--text-dim);font-size:13px;margin:0">
+          Needs a few days of history before terms can rise.</p>
+        {% endif %}
+      </div>
+    </section>
+
+    <section class="panel">
+      <h3><span>Model drops</span><span>7 days</span></h3>
+      <div class="body">
+        {% if drops %}
+          {% for d in drops %}
+          <div class="drop">
+            <div class="n">
+              <a href="{{ d.url }}" target="_blank" rel="noopener">{{ d.title }}</a>
+              <span class="s">{{ d.source_name }} · {{ d.age }}
+              {%- if d.meta.downloads %} · {{ '{:,}'.format(d.meta.downloads) }} downloads{% endif %}</span>
+            </div>
+          </div>
+          {% endfor %}
+        {% else %}
+        <p style="color:var(--text-dim);font-size:13px;margin:0">No releases detected.</p>
+        {% endif %}
+      </div>
+    </section>
+
+    <section class="panel">
+      <h3><span>Most mentioned</span><span>48h</span></h3>
+      <div class="body">
+        {% if entities %}
+        <div class="bars">
+          {% set top = entities[0].count %}
+          {% for e in entities %}
+          <div class="bar">
+            <a class="lab" href="/search?q={{ e.entity|urlencode }}">{{ e.entity }}</a>
+            <span class="n">{{ e.count }}</span>
+            <div class="track"><div class="fill" style="width:{{ (e.count / top * 100)|round }}%"></div></div>
+          </div>
+          {% endfor %}
+        </div>
+        {% else %}
+        <p style="color:var(--text-dim);font-size:13px;margin:0">No entities extracted yet.</p>
+        {% endif %}
+      </div>
+    </section>
+  </aside>
+</div>
+{% endblock %}
