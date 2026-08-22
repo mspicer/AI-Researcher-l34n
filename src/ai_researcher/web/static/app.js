@@ -51,6 +51,17 @@
     verbose = localStorage.getItem(VERBOSE_KEY) === "1";
   } catch (e) { /* private mode */ }
 
+  // Table headers also stick, and at the same offset the strip claims. Measure
+  // rather than hardcode: the strip wraps to two lines on a narrow window, and
+  // a fixed guess buries the column headers underneath it while scrolling.
+  function syncStickTop() {
+    var top = 54;
+    if (ingestStatus && !ingestStatus.hasAttribute("hidden")) {
+      top += ingestStatus.offsetHeight;
+    }
+    document.documentElement.style.setProperty("--stick-top", top + "px");
+  }
+
   function setVerbose(on) {
     verbose = !!on;
     if (verboseToggle) verboseToggle.checked = verbose;
@@ -61,6 +72,7 @@
     try {
       localStorage.setItem(VERBOSE_KEY, verbose ? "1" : "0");
     } catch (e) { /* ignore */ }
+    syncStickTop();
     syncPolling();
   }
 
@@ -99,6 +111,7 @@
       }
     }
     ingestStatus.classList.toggle("live", !!running);
+    syncStickTop();
   }
 
   if (verboseToggle) {
@@ -200,6 +213,8 @@
   }
 
   syncPolling();
+  syncStickTop();
+  window.addEventListener("resize", syncStickTop);
   if (verbose || wasRunning) fetchStatus();
 
   /* ── keyboard shortcuts ────────────────────────────────────── */

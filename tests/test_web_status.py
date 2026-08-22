@@ -122,6 +122,21 @@ class TestDashboardChrome:
         assert ".ingest-stage" in css
         assert ".ingest-status.live" in css
 
+    def test_sticky_headers_clear_the_ingest_strip(self, client: TestClient):
+        """Regression: table headers must not pin underneath the status strip.
+
+        Both stick to the top of the viewport. The strip claims `top: 54px`
+        and a z-index, so a table header pinned at the same 54px scrolls in
+        behind it and the column labels become unreadable on /sources and
+        /runs whenever the verbose toggle is on. The header offset has to be
+        driven by --stick-top, which app.js grows by the strip's real height.
+        """
+        css = client.get("/static/app.css").text
+        js = client.get("/static/app.js").text
+        assert "--stick-top" in css, "no shared offset token"
+        assert "top: var(--stick-top)" in css, "table headers still hardcode an offset"
+        assert "syncStickTop" in js, "nothing updates the offset when the strip shows"
+
     def test_pages_render(self, client: TestClient):
         for path in ("/", "/feed", "/search", "/saved", "/sources", "/runs"):
             r = client.get(path)

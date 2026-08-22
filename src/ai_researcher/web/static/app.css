@@ -46,6 +46,11 @@
 
   --radius: 3px;
   --radius-sm: 2px;
+
+  /* Where the topbar stops. Anything else that sticks — table headers —
+     pins to this rather than to a hardcoded 54px, because the verbose
+     ingest strip sits between them and app.js grows this to match. */
+  --stick-top: 54px;
   /* Clients are other machines on the LAN, so neither stack may resolve past
      the generics. Both are ordered so the fallback still reads as intended:
      a terminal mono for chrome, a slightly condensed grotesk for prose. */
@@ -525,7 +530,7 @@ table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th {
   text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--border-hi);
   font: 700 10px var(--mono); text-transform: uppercase; letter-spacing: .16em;
-  color: var(--cyan); position: sticky; top: 54px;
+  color: var(--cyan); position: sticky; top: var(--stick-top); z-index: 2;
   background: #0d0d24; text-shadow: var(--glow-soft);
 }
 td { padding: 8px 12px; border-bottom: 1px solid var(--border); color: var(--text-mid); }
