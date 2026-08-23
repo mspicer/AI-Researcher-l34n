@@ -13,7 +13,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS sources (
@@ -139,6 +139,48 @@ CREATE TABLE IF NOT EXISTS kv (
 CREATE TABLE IF NOT EXISTS seen (
     item_id INTEGER PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,
     seen_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS judgments (
+    item_id      INTEGER PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,
+    quality      REAL NOT NULL DEFAULT 0,
+    practicality REAL NOT NULL DEFAULT 0,
+    feasibility  REAL NOT NULL DEFAULT 0,
+    usefulness   REAL NOT NULL DEFAULT 0,
+    readiness    REAL NOT NULL DEFAULT 0,
+    verdict      TEXT NOT NULL DEFAULT 'skip',
+    reasons      TEXT NOT NULL DEFAULT '[]',
+    artifacts    TEXT NOT NULL DEFAULT '[]',
+    model        TEXT NOT NULL DEFAULT '',
+    created_at   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_judgments_readiness ON judgments (readiness DESC);
+CREATE INDEX IF NOT EXISTS idx_judgments_verdict ON judgments (verdict);
+
+CREATE TABLE IF NOT EXISTS research (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    cluster_id INTEGER REFERENCES clusters(id) ON DELETE SET NULL,
+    item_id    INTEGER NOT NULL UNIQUE REFERENCES items(id) ON DELETE CASCADE,
+    title      TEXT NOT NULL DEFAULT '',
+    status     TEXT NOT NULL DEFAULT 'running',
+    readiness  REAL NOT NULL DEFAULT 0,
+    verdict    TEXT NOT NULL DEFAULT '',
+    decision   TEXT NOT NULL DEFAULT '',
+    model      TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_research_status ON research (status, readiness DESC);
+
+CREATE TABLE IF NOT EXISTS research_pages (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    research_id INTEGER NOT NULL REFERENCES research(id) ON DELETE CASCADE,
+    slug        TEXT NOT NULL,
+    title       TEXT NOT NULL DEFAULT '',
+    markdown    TEXT NOT NULL DEFAULT '',
+    turn        INTEGER NOT NULL DEFAULT 0,
+    created_at  TEXT NOT NULL,
+    UNIQUE (research_id, slug)
 );
 """
 

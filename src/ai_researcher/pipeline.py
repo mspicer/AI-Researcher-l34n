@@ -1,4 +1,4 @@
-"""The ingest pipeline: fetch → store → enrich → embed → cluster → brief.
+"""The ingest pipeline: fetch → store → enrich → embed → cluster → judge → research → brief.
 
 One `run()` is a complete refresh. It is safe to call concurrently-ish (the web
 UI guards with a lock) and safe to interrupt: every stage commits as it goes, so
@@ -21,9 +21,10 @@ from typing import Any
 from .config import Settings, Source, load_sources
 from .connectors import build_registry
 from .db import Database, jdump
-from .enrich import Embedder, Enricher, OllamaClient
+from .enrich import Embedder, Enricher, Judge, OllamaClient
 from .http import Fetcher
 from .progress import RunProgress
+from .research import DeepResearcher
 from .trends import build_clusters, compute_daily_topics, generate_brief
 from .util import iso, utcnow
 
@@ -294,6 +295,14 @@ class Pipeline:
                 current="", done=0, total=0, active=[],
             )
             topic_stats = compute_daily_topics(self.db)
+            judge_stats = await Judge(
+                self.settings, self.db, client, progress=self.progress,
+            ).run()
+            researcher = DeepResearcher(
+                self.settings, self.db, client, progress=self.progress,
+            )
+            research_stats = await researcher.run()
+            researcher.relink_clusters()
             if brief:
                 self.progress.update(
                     stage="brief", detail="Writing daily brief",
@@ -310,6 +319,8 @@ class Pipeline:
             "embed": embed_stats,
             "cluster": cluster_stats,
             "topics": topic_stats,
+            "judge": judge_stats,
+            "research": research_stats,
             "brief": brief_stats,
             "ollama": {
                 "available": client.available,

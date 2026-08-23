@@ -19,6 +19,7 @@
     <a href="/feed"    class="{{ 'on' if page=='feed' }}">Firehose</a>
     <a href="/search"  class="{{ 'on' if page=='search' }}">Search</a>
     <a href="/saved"   class="{{ 'on' if page=='saved' }}">Saved{% if stats.saved %} ({{ stats.saved }}){% endif %}</a>
+    <a href="/adapt"   class="{{ 'on' if page=='adapt' }}">Adapt{% if stats.research_briefs %} ({{ stats.research_briefs }}){% endif %}</a>
     <a href="/sources" class="{{ 'on' if page=='sources' }}">Sources</a>
     <a href="/runs"    class="{{ 'on' if page=='runs' }}">Runs</a>
   </nav>

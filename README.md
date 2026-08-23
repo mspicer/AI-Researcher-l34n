@@ -47,7 +47,13 @@ That runs the dashboard continuously and ingests once an hour.
                                             (top N only)   (cosine +     (ranked)
                                                             entity guard)      │
                                                                                ▼
-                                                                         daily brief
+                                              judgment ──▶ readiness gate ──▶ daily brief
+                                         (quality / practicality /              │
+                                          feasibility / usefulness)              │
+                                                                               ▼
+                                                              Karpathy wiki (top N)
+                                                         ingest → claims → critique
+                                                              → adapt → lint
 ```
 
 **Ingest.** Ten connector kinds — RSS/Atom, Reddit, Hacker News, arXiv, HF
@@ -77,18 +83,21 @@ resource here:
    actually appear on the page — bounded by a count *and* a wall-clock budget.
 
 Set `AIR_ENRICH_BUDGET` / `AIR_ENRICH_TIME_BUDGET` to match your hardware.
+Deep research is bounded separately by `AIR_RESEARCH_BUDGET` /
+`AIR_RESEARCH_TIME_BUDGET` / `AIR_RESEARCH_THRESHOLD`.
 
 ## Commands
 
 | Command | What it does |
 |---|---|
-| `ai-researcher run` | Full cycle: fetch → enrich → cluster → brief |
+| `ai-researcher run` | Full cycle: fetch → enrich → cluster → judge → research → brief |
 | `ai-researcher run --no-ingest` | Re-analyse what's stored, no fetching |
 | `ai-researcher run --source simonw` | Limit to one source (repeatable) |
 | `ai-researcher serve` | Web dashboard |
 | `ai-researcher doctor` | Diagnose everything that silently degrades |
 | `ai-researcher sources` | Per-source health table |
 | `ai-researcher brief` | Print / regenerate today's brief |
+| `ai-researcher research` | Re-judge and write deep-research briefs |
 | `ai-researcher recluster` | Rebuild stories and topic history |
 | `ai-researcher stats` | Counters as JSON |
 
@@ -97,7 +106,31 @@ whether embeddings are available, which credentials are missing, and where
 content is stuck.
 
 Dashboard shortcuts: `d` dashboard · `f` firehose · `s` search · `b` saved ·
-`h` sources · `r` runs · `/` focus search.
+`a` adapt · `h` sources · `r` runs · `/` focus search.
+
+## Quality gate and Karpathy research
+
+Attention (corroboration, engagement, recency) is the wrong axis for "should I
+try this". After clustering, every item is scored on four practitioner
+questions — **quality**, **practicality**, **feasibility**, **usefulness** —
+first by rules, then by the model for the highest-readiness slice.
+
+The composite `readiness` gates a five-turn wiki, following Karpathy's
+raw-sources / wiki / schema pattern:
+
+1. **Ingest** — immutable facts, artifacts, claims as stated
+2. **Claims** — demonstrated vs asserted, missing evidence
+3. **Critique** — the four scores in prose, plus contradictions
+4. **Adapt** — who it's for, prerequisites, first-week experiment, risks, done-looks-like
+5. **Lint** — contradictions, orphans, unknowns; the last word on the verdict
+
+Only stories at or above `AIR_RESEARCH_THRESHOLD` (default 0.62) with a
+`research` or `adopt` verdict spend a slot. The budget is small on purpose:
+five model calls per story. With no model the same pages are filed as a
+structured digest so the Adapt tab is never blank.
+
+Open `/adapt` (or press `a`) for the lab notes. A story that already has a
+brief links there as **lab notes**.
 
 ## API access
 

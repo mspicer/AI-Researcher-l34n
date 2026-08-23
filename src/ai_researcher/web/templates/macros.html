@@ -5,6 +5,24 @@
 <span class="badge c-{{ category }}">{{ label }}</span>
 {%- endmacro %}
 
+{% macro verdict_pill(verdict) -%}
+{% if verdict %}
+<span class="pill verdict v-{{ verdict }}">{{ verdict }}</span>
+{% endif %}
+{%- endmacro %}
+
+{% macro meters(item) -%}
+{% if item.readiness %}
+<div class="meters" title="quality / practicality / feasibility / usefulness">
+  <span class="m"><i style="width:{{ (item.quality * 100)|round }}%"></i><em>Q</em></span>
+  <span class="m"><i style="width:{{ (item.practicality * 100)|round }}%"></i><em>P</em></span>
+  <span class="m"><i style="width:{{ (item.feasibility * 100)|round }}%"></i><em>F</em></span>
+  <span class="m"><i style="width:{{ (item.usefulness * 100)|round }}%"></i><em>U</em></span>
+  <span class="m-read">{{ '%.2f'|format(item.readiness) }}</span>
+</div>
+{% endif %}
+{%- endmacro %}
+
 {% macro savebtn(item) -%}
 <button class="save {{ 'on' if item.is_saved }}" data-id="{{ item.id }}"
         title="{{ 'Saved' if item.is_saved else 'Save' }}"
@@ -18,8 +36,10 @@
   <div class="main">
     <h4><a href="{{ item.url }}" target="_blank" rel="noopener">{{ item.title }}</a></h4>
     {% if item.summary %}<p class="sum">{{ item.summary }}</p>{% endif %}
+    {{ meters(item) }}
     <div class="meta">
       {{ badge(item.category, item.category_label) }}
+      {{ verdict_pill(item.verdict) }}
       <span class="src">{{ item.source_name }}</span>
       <span class="dotsep"></span><span>{{ item.age }}</span>
       {% if item.domain %}<span class="dotsep"></span><span>{{ item.domain }}</span>{% endif %}
@@ -31,6 +51,9 @@
       {% for e in item.entities[:4] %}
         <a class="pill" href="/search?q={{ e|urlencode }}">{{ e }}</a>
       {% endfor %}
+      {% if item.research_id %}
+        <a class="pill lab" href="/adapt/{{ item.research_id }}">lab notes</a>
+      {% endif %}
     </div>
   </div>
   {{ savebtn(item) }}
@@ -48,9 +71,11 @@
 
   {% if story.summary %}<p class="sum">{{ story.summary }}</p>{% endif %}
   {% if story.primary.why %}<p class="why">{{ story.primary.why }}</p>{% endif %}
+  {{ meters(story) }}
 
   <div class="meta">
     {{ badge(story.category, story.category_label) }}
+    {{ verdict_pill(story.verdict) }}
     {% if story.source_count > 1 %}
       <span class="pill corr">{{ story.source_count }} sources</span>
     {% else %}
@@ -60,6 +85,9 @@
     {% for e in story.entities[:5] %}
       <a class="pill" href="/search?q={{ e|urlencode }}">{{ e }}</a>
     {% endfor %}
+    {% if story.research_id %}
+      <a class="pill lab" href="/adapt/{{ story.research_id }}">lab notes →</a>
+    {% endif %}
   </div>
 
   {% if story.others %}

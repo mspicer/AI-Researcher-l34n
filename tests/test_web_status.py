@@ -58,6 +58,7 @@ class TestStatusApi:
         for key in (
             "items_24h", "stories_today", "sources_ok", "sources_total",
             "sources_failing", "last_run", "last_run_status",
+            "judged", "adopt", "research_ready", "research_briefs",
         ):
             assert key in stats
 
@@ -138,10 +139,20 @@ class TestDashboardChrome:
         assert "syncStickTop" in js, "nothing updates the offset when the strip shows"
 
     def test_pages_render(self, client: TestClient):
-        for path in ("/", "/feed", "/search", "/saved", "/sources", "/runs"):
+        for path in ("/", "/feed", "/search", "/saved", "/adapt", "/sources", "/runs"):
             r = client.get(path)
             assert r.status_code == 200, path
             assert "AI" in r.text
+
+    def test_home_and_nav_include_adapt(self, client: TestClient):
+        html = client.get("/").text
+        assert 'href="/adapt"' in html
+        assert "Ready to build" in html
+        js = client.get("/static/app.js").text
+        assert "/adapt" in js
+
+    def test_missing_research_brief_is_404(self, client: TestClient):
+        assert client.get("/adapt/999").status_code == 404
 
 
 class TestRefreshEndpoint:

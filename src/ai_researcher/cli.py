@@ -10,8 +10,9 @@ import sys
 
 from .config import Settings, load_sources
 from .db import Database
-from .enrich import OllamaClient
+from .enrich import Judge, OllamaClient
 from .pipeline import Pipeline, sync_sources
+from .research import DeepResearcher
 from .trends import backfill_topics, build_clusters, generate_brief
 from .web import queries as Q
 
@@ -65,6 +66,15 @@ def cmd_run(args) -> int:
     if cluster:
         print(f"  stories : {cluster.get('clusters', 0)} from "
               f"{cluster.get('items', 0)} items via {cluster.get('method')}")
+    judge = result.get("judge") or {}
+    if judge:
+        print(f"  judged  : {judge.get('judged', 0)} "
+              f"({judge.get('llm', 0)} by model)  "
+              f"adopt={judge.get('adopt', 0)} research={judge.get('research', 0)}")
+    research = result.get("research") or {}
+    if research:
+        print(f"  research: {research.get('researched', 0)} briefs "
+              f"({research.get('llm', 0)} model, {research.get('fallback', 0)} fallback)")
     ollama = result.get("ollama") or {}
     if ollama:
         print(f"  ollama  : {'ready' if ollama.get('available') else 'unavailable'} "
@@ -212,6 +222,9 @@ def cmd_doctor(args) -> int:
     print(f"  items last 24h : {stats['items_24h']}")
     print(f"  stories today  : {stats['stories_today']}")
     print(f"  pending enrich : {stats['pending_enrich']}")
+    print(f"  judged         : {stats.get('judged', 0)}  "
+          f"(adopt {stats.get('adopt', 0)} · research {stats.get('research_ready', 0)})")
+    print(f"  lab briefs     : {stats.get('research_briefs', 0)}")
     print(f"  sources ok     : {stats['sources_ok']}/{stats['sources_total']}"
           f"  ({stats['sources_failing']} failing)")
     print(f"  last run       : {stats['last_run']} ({stats['last_run_status']})")
@@ -227,6 +240,27 @@ def cmd_recluster(args) -> int:
     return 0
 
 
+def cmd_research(args) -> int:
+    """Re-judge and (re)build Karpathy briefs without fetching."""
+    settings, db = _ctx()
+
+    async def go():
+        client = OllamaClient(settings)
+        try:
+            await client.probe()
+            judged = await Judge(settings, db, client).run()
+            researcher = DeepResearcher(settings, db, client)
+            researched = await researcher.run(limit=args.limit, force=args.force)
+            researcher.relink_clusters()
+            return {"judge": judged, "research": researched}
+        finally:
+            await client.aclose()
+
+    result = asyncio.run(go())
+    print(json.dumps(result, indent=2))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="ai-researcher", description="Local AI trends dashboard"
@@ -234,7 +268,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--log", default="INFO", help="log level")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p = sub.add_parser("run", help="fetch, enrich, cluster, and brief")
+    p = sub.add_parser("run", help="fetch, enrich, judge, research, cluster, and brief")
     p.add_argument("--source", action="append", help="limit to source key(s)")
     p.add_argument("--no-ingest", action="store_true", help="re-analyse without fetching")
     p.add_argument("--force-brief", action="store_true", help="regenerate today's brief")
@@ -265,6 +299,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--hours", type=int, default=48)
     p.add_argument("--backfill", type=int, default=14)
     p.set_defaults(fn=cmd_recluster)
+
+    p = sub.add_parser("research", help="judge items and write deep-research briefs")
+    p.add_argument("--limit", type=int, default=None, help="max stories to research")
+    p.add_argument("--force", action="store_true", help="rewrite existing briefs")
+    p.set_defaults(fn=cmd_research)
 
     args = parser.parse_args(argv)
     _log(args.log)

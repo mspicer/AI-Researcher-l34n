@@ -169,6 +169,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 rising=rising_topics(db, target_day, limit=14),
                 entities=top_entities(db, days=2, limit=12),
                 drops=Q.model_drops(db, days=7, limit=12),
+                ready=Q.ready_briefs(db, limit=8),
                 counts=Q.category_counts(db, hours=24),
                 active_category=category,
                 min_sources=min_sources,
@@ -238,6 +239,32 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ctx(request, page="runs", runs=Q.recent_runs(db, limit=30)),
         )
 
+    @app.get("/adapt", response_class=HTMLResponse)
+    async def adapt(request: Request, verdict: str | None = Query(None)):
+        allowed = {None, "adopt", "research", "watch", "skip"}
+        if verdict not in allowed:
+            verdict = None
+        return templates.TemplateResponse(
+            request,
+            "adapt.html",
+            ctx(
+                request, page="adapt",
+                briefs=Q.list_research(db, verdict=verdict, limit=60),
+                active_verdict=verdict,
+            ),
+        )
+
+    @app.get("/adapt/{research_id}", response_class=HTMLResponse)
+    async def adapt_detail(request: Request, research_id: int):
+        brief = Q.get_research(db, research_id)
+        if brief is None:
+            raise HTTPException(404, "no such research brief")
+        return templates.TemplateResponse(
+            request,
+            "research.html",
+            ctx(request, page="adapt", brief=brief),
+        )
+
     # ── json api ─────────────────────────────────────────────────────
     @app.get("/api/status")
     async def api_status():
@@ -251,6 +278,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/rising")
     async def api_rising(day: str | None = None):
         return {"rising": rising_topics(db, day, limit=25)}
+
+    @app.get("/api/research")
+    async def api_research(verdict: str | None = None):
+        return {"briefs": Q.list_research(db, verdict=verdict, limit=40)}
+
+    @app.get("/api/research/{research_id}")
+    async def api_research_one(research_id: int):
+        brief = Q.get_research(db, research_id)
+        if brief is None:
+            raise HTTPException(404, "no such research brief")
+        return brief
 
     @app.post("/api/refresh")
     async def api_refresh(request: Request, background: bool = True):

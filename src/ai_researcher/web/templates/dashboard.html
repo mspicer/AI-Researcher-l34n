@@ -76,6 +76,27 @@
     </section>
 
     <section class="panel">
+      <h3><span>Ready to build</span><span>gated research</span></h3>
+      <div class="body">
+        {% if ready %}
+          {% for b in ready %}
+          <div class="drop">
+            <div class="n">
+              <a href="/adapt/{{ b.id }}">{{ b.title }}</a>
+              <span class="s">{{ b.decision or b.verdict }} · {{ '%.2f'|format(b.readiness) }} · {{ b.age }}</span>
+            </div>
+          </div>
+          {% endfor %}
+          <p style="margin:10px 0 0"><a href="/adapt">All adaptation briefs →</a></p>
+        {% else %}
+        <p style="color:var(--text-dim);font-size:13px;margin:0">
+          No story has cleared the readiness gate yet. After a run, high-quality
+          items get a multi-turn lab brief here.</p>
+        {% endif %}
+      </div>
+    </section>
+
+    <section class="panel">
       <h3><span>Model drops</span><span>7 days</span></h3>
       <div class="body">
         {% if drops %}

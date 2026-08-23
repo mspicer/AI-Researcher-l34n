@@ -389,6 +389,40 @@ nav.tabs a.on::after {
   color: var(--amber); border-color: rgba(255,182,39,.45);
   background: rgba(255,182,39,.08); box-shadow: 0 0 10px rgba(255,182,39,.16);
 }
+.pill.lab {
+  color: var(--lime); border-color: rgba(57,255,136,.45);
+  background: rgba(57,255,136,.08); box-shadow: 0 0 10px rgba(57,255,136,.16);
+}
+.pill.verdict { text-transform: uppercase; letter-spacing: .08em; font-weight: 700; }
+.pill.v-adopt { color: var(--lime); border-color: rgba(57,255,136,.55); background: rgba(57,255,136,.12); }
+.pill.v-research { color: var(--cyan); border-color: rgba(0,240,255,.5); background: rgba(0,240,255,.1); }
+.pill.v-watch { color: var(--amber); border-color: rgba(255,182,39,.45); background: rgba(255,182,39,.08); }
+.pill.v-skip { color: var(--text-dim); }
+
+.meters {
+  display: flex; align-items: center; gap: 7px;
+  margin: 8px 0 0 34px; font: 10px var(--mono); color: var(--text-dim);
+}
+.item .meters { margin-left: 0; }
+.meters .m {
+  position: relative; width: 36px; height: 6px;
+  background: rgba(0,0,0,.55); border: 1px solid var(--border); border-radius: 2px;
+}
+.meters .m i {
+  display: block; height: 100%;
+  background: linear-gradient(90deg, var(--violet), var(--cyan));
+  box-shadow: 0 0 8px rgba(0,240,255,.45);
+}
+.meters .m em {
+  position: absolute; top: 7px; left: 0; font-style: normal; font-size: 8.5px;
+  letter-spacing: .08em; color: var(--text-dim);
+}
+.meters .m-read {
+  margin-left: 4px; color: var(--cyan); font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.story .meters { padding-bottom: 14px; }
+.item .meters { margin-bottom: 10px; }
 a.pill:hover {
   color: var(--cyan); border-color: rgba(0,240,255,.45);
   background: rgba(0,240,255,.09); text-shadow: none;

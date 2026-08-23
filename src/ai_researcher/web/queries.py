@@ -18,12 +18,23 @@ ITEM_SELECT = """
            COALESCE(e.tags, '[]')      AS tags,
            COALESCE(e.importance, 0.5) AS importance,
            COALESCE(e.why, '')         AS why,
+           COALESCE(j.quality, 0)      AS quality,
+           COALESCE(j.practicality, 0) AS practicality,
+           COALESCE(j.feasibility, 0)  AS feasibility,
+           COALESCE(j.usefulness, 0)   AS usefulness,
+           COALESCE(j.readiness, 0)    AS readiness,
+           COALESCE(j.verdict, '')     AS verdict,
+           COALESCE(j.artifacts, '[]') AS artifacts,
+           COALESCE(r.id, 0)           AS research_id,
+           COALESCE(r.decision, '')    AS research_decision,
            COALESCE(s.name, i.source_key) AS source_name,
            COALESCE(s.tier, 'news')    AS tier,
            COALESCE(s.weight, 1.0)     AS source_weight,
            (sv.item_id IS NOT NULL)    AS is_saved
     FROM items i
     LEFT JOIN enrichment e ON e.item_id = i.id
+    LEFT JOIN judgments j  ON j.item_id = i.id
+    LEFT JOIN research r   ON r.item_id = i.id AND r.status = 'complete'
     LEFT JOIN sources s    ON s.key = i.source_key
     LEFT JOIN saved sv     ON sv.item_id = i.id
 """
@@ -45,6 +56,15 @@ def _shape_item(row, now=None) -> dict[str, Any]:
         "entities": jload(row["entities"], []),
         "tags": jload(row["tags"], []),
         "importance": round(float(row["importance"]), 2),
+        "quality": round(float(row["quality"] or 0), 2),
+        "practicality": round(float(row["practicality"] or 0), 2),
+        "feasibility": round(float(row["feasibility"] or 0), 2),
+        "usefulness": round(float(row["usefulness"] or 0), 2),
+        "readiness": round(float(row["readiness"] or 0), 2),
+        "verdict": row["verdict"] or "",
+        "artifacts": jload(row["artifacts"], []),
+        "research_id": int(row["research_id"] or 0),
+        "research_decision": row["research_decision"] or "",
         "source_key": row["source_key"],
         "source_name": row["source_name"],
         "tier": row["tier"],
@@ -123,6 +143,14 @@ def top_stories(
             "items": items,
             "others": items[1:],
             "sources": sorted({i["source_name"] for i in items}),
+            "quality": items[0]["quality"],
+            "practicality": items[0]["practicality"],
+            "feasibility": items[0]["feasibility"],
+            "usefulness": items[0]["usefulness"],
+            "readiness": items[0]["readiness"],
+            "verdict": items[0]["verdict"],
+            "research_id": items[0]["research_id"],
+            "research_decision": items[0]["research_decision"],
         })
     return stories
 
@@ -310,6 +338,14 @@ def dashboard_stats(db: Database) -> dict[str, Any]:
             "SELECT COUNT(*) FROM items WHERE id NOT IN (SELECT item_id FROM enrichment)",
             default=0,
         ),
+        "judged": db.scalar("SELECT COUNT(*) FROM judgments", default=0),
+        "adopt": db.scalar("SELECT COUNT(*) FROM judgments WHERE verdict='adopt'", default=0),
+        "research_ready": db.scalar(
+            "SELECT COUNT(*) FROM judgments WHERE verdict IN ('research','adopt')", default=0,
+        ),
+        "research_briefs": db.scalar(
+            "SELECT COUNT(*) FROM research WHERE status='complete'", default=0,
+        ),
         "last_run": humanize_age(parse_datetime(last_run["started_at"]), now=now) if last_run else "never",
         "last_run_status": last_run["status"] if last_run else "none",
     }
@@ -337,3 +373,123 @@ def source_options(db: Database) -> list[dict[str, str]]:
         "SELECT key, name FROM sources WHERE enabled=1 ORDER BY name"
     )
     return [{"key": r["key"], "name": r["name"]} for r in rows]
+
+
+def list_research(
+    db: Database, *, verdict: str | None = None, limit: int = 40,
+) -> list[dict[str, Any]]:
+    now = utcnow()
+    where = ["r.status = 'complete'"]
+    params: list[Any] = []
+    if verdict:
+        where.append("r.verdict = ?")
+        params.append(verdict)
+    rows = db.query(
+        f"""
+        SELECT r.id, r.item_id, r.cluster_id, r.title, r.readiness, r.verdict,
+               r.decision, r.model, r.created_at, r.updated_at,
+               COALESCE(e.category, '') AS category,
+               COALESCE(e.summary, '') AS summary,
+               COALESCE(j.quality, 0) AS quality,
+               COALESCE(j.practicality, 0) AS practicality,
+               COALESCE(j.feasibility, 0) AS feasibility,
+               COALESCE(j.usefulness, 0) AS usefulness,
+               i.url
+        FROM research r
+        JOIN items i ON i.id = r.item_id
+        LEFT JOIN enrichment e ON e.item_id = i.id
+        LEFT JOIN judgments j ON j.item_id = i.id
+        WHERE {' AND '.join(where)}
+        ORDER BY r.readiness DESC, r.updated_at DESC
+        LIMIT ?
+        """,
+        tuple(params + [limit]),
+    )
+    out = []
+    for row in rows:
+        out.append({
+            "id": row["id"],
+            "item_id": row["item_id"],
+            "cluster_id": row["cluster_id"],
+            "title": row["title"],
+            "url": row["url"],
+            "summary": row["summary"],
+            "category": row["category"] or "opinion-analysis",
+            "category_label": CATEGORY_LABELS.get(row["category"], "Other"),
+            "readiness": round(float(row["readiness"] or 0), 2),
+            "verdict": row["verdict"] or "",
+            "decision": row["decision"] or "",
+            "model": row["model"] or "",
+            "quality": round(float(row["quality"] or 0), 2),
+            "practicality": round(float(row["practicality"] or 0), 2),
+            "feasibility": round(float(row["feasibility"] or 0), 2),
+            "usefulness": round(float(row["usefulness"] or 0), 2),
+            "age": humanize_age(parse_datetime(row["updated_at"]), now=now),
+        })
+    return out
+
+
+def get_research(db: Database, research_id: int) -> dict[str, Any] | None:
+    row = db.one(
+        """
+        SELECT r.id, r.item_id, r.cluster_id, r.title, r.readiness, r.verdict,
+               r.decision, r.model, r.created_at, r.updated_at, r.status,
+               COALESCE(e.category, '') AS category,
+               COALESCE(e.summary, '') AS summary,
+               COALESCE(j.quality, 0) AS quality,
+               COALESCE(j.practicality, 0) AS practicality,
+               COALESCE(j.feasibility, 0) AS feasibility,
+               COALESCE(j.usefulness, 0) AS usefulness,
+               COALESCE(j.reasons, '[]') AS reasons,
+               COALESCE(j.artifacts, '[]') AS artifacts,
+               i.url
+        FROM research r
+        JOIN items i ON i.id = r.item_id
+        LEFT JOIN enrichment e ON e.item_id = i.id
+        LEFT JOIN judgments j ON j.item_id = i.id
+        WHERE r.id = ?
+        """,
+        (research_id,),
+    )
+    if row is None:
+        return None
+    pages = db.query(
+        """
+        SELECT slug, title, markdown, turn
+        FROM research_pages
+        WHERE research_id = ?
+        ORDER BY turn ASC
+        """,
+        (research_id,),
+    )
+    return {
+        "id": row["id"],
+        "item_id": row["item_id"],
+        "cluster_id": row["cluster_id"],
+        "title": row["title"],
+        "url": row["url"],
+        "summary": row["summary"],
+        "category": row["category"] or "opinion-analysis",
+        "category_label": CATEGORY_LABELS.get(row["category"], "Other"),
+        "status": row["status"],
+        "readiness": round(float(row["readiness"] or 0), 2),
+        "verdict": row["verdict"] or "",
+        "decision": row["decision"] or "",
+        "model": row["model"] or "",
+        "quality": round(float(row["quality"] or 0), 2),
+        "practicality": round(float(row["practicality"] or 0), 2),
+        "feasibility": round(float(row["feasibility"] or 0), 2),
+        "usefulness": round(float(row["usefulness"] or 0), 2),
+        "reasons": jload(row["reasons"], []),
+        "artifacts": jload(row["artifacts"], []),
+        "age": humanize_age(parse_datetime(row["updated_at"])),
+        "pages": [
+            {"slug": p["slug"], "title": p["title"], "markdown": p["markdown"], "turn": p["turn"]}
+            for p in pages
+        ],
+    }
+
+
+def ready_briefs(db: Database, *, limit: int = 8) -> list[dict[str, Any]]:
+    """Stories a practitioner should look at first — adopt, then spike."""
+    return list_research(db, limit=limit)

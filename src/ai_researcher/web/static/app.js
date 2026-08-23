@@ -221,7 +221,7 @@
   document.addEventListener("keydown", function (ev) {
     var typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
     if (typing || ev.metaKey || ev.ctrlKey || ev.altKey) return;
-    var go = { d: "/", f: "/feed", s: "/search", b: "/saved", h: "/sources", r: "/runs" };
+    var go = { d: "/", f: "/feed", s: "/search", b: "/saved", a: "/adapt", h: "/sources", r: "/runs" };
     if (go[ev.key]) { location.href = go[ev.key]; return; }
     if (ev.key === "/") {
       ev.preventDefault();

@@ -1,0 +1,193 @@
+"""Karpathy wiki: fallback pages, parsers, and the gated runner."""
+
+from __future__ import annotations
+
+import asyncio
+import tempfile
+from datetime import timedelta
+from pathlib import Path
+
+import pytest
+
+from ai_researcher.config import Settings
+from ai_researcher.db import Database, jdump
+from ai_researcher.enrich.judge import Judge
+from ai_researcher.enrich.ollama import OllamaClient
+from ai_researcher.research.fallback import render_page
+from ai_researcher.research.schema import TURNS, index_markdown
+from ai_researcher.research.wiki import (
+    DeepResearcher,
+    decision_to_verdict,
+    parse_decision,
+    parse_scores,
+)
+from ai_researcher.util import content_hash, iso, url_hash, utcnow
+
+
+def _candidate(**kw):
+    base = {
+        "title": "Open weights for a 7B local model",
+        "category": "model-release",
+        "entities": ["Acme"],
+        "source_count": 2,
+        "artifacts": ["https://github.com/acme/model"],
+        "reasons": ["names a fetchable artifact", "looks runnable on commodity hardware"],
+        "judgment": {
+            "quality": 0.72, "practicality": 0.70, "feasibility": 0.68,
+            "usefulness": 0.66, "readiness": 0.69, "verdict": "research",
+            "reasons": ["names a fetchable artifact"],
+        },
+        "items": [{
+            "title": "Open weights for a 7B local model",
+            "body": "Weights and code. Runs on RTX.",
+            "summary": "Acme released 7B open weights with a GitHub repo.",
+            "why": "local inference just got cheaper",
+            "url": "https://acme.example/blog",
+            "source_name": "Acme",
+        }],
+    }
+    base.update(kw)
+    return base
+
+
+class TestFallbackPages:
+    @pytest.mark.parametrize("slug,heading", [
+        ("source", "# Source"),
+        ("claims", "# Claims"),
+        ("critique", "# Critique"),
+        ("adapt", "# Adapt"),
+        ("lint", "# Lint"),
+    ])
+    def test_each_turn_has_its_heading(self, slug, heading):
+        pages = {}
+        md = render_page(slug, _candidate(), pages)
+        assert md.startswith(heading)
+        pages[slug] = md
+
+    def test_adapt_carries_a_decision(self):
+        md = render_page("adapt", _candidate(), {})
+        assert "**spike**" in md or "**adopt**" in md
+
+    def test_lint_mentions_missing_pages(self):
+        md = render_page("lint", _candidate(), {})
+        assert "source" in md.lower()
+
+
+class TestParsers:
+    def test_parse_decision_last_wins(self):
+        text = "## Decision\n**adopt** — try it.\n## Final verdict\n**watch** because the repo 404s."
+        assert parse_decision(text) == "watch"
+
+    def test_parse_scores(self):
+        scores = parse_scores("scores: Q=0.71 P=0.60 F=0.55 U=0.80")
+        assert scores == {"quality": 0.71, "practicality": 0.60, "feasibility": 0.55, "usefulness": 0.80}
+
+    def test_parse_scores_rejects_junk(self):
+        assert parse_scores("no scores here") is None
+
+    def test_decision_cannot_jump_skip_to_adopt(self):
+        assert decision_to_verdict("adopt", "skip") == "skip"
+
+    def test_decision_may_downgrade(self):
+        assert decision_to_verdict("skip", "research") == "skip"
+
+    def test_index_lists_filed_pages(self):
+        idx = index_markdown({"source": "# Source\nFacts."})
+        assert "`source`" in idx
+
+
+class TestTurns:
+    def test_five_turns_in_karpathy_order(self):
+        assert [t["slug"] for t in TURNS] == ["source", "claims", "critique", "adapt", "lint"]
+
+
+@pytest.fixture
+def db():
+    with tempfile.TemporaryDirectory() as tmp:
+        yield Database(Path(tmp) / "t.db")
+
+
+def add_ready_item(db, *, title="Local 7B open weights on GitHub", verdict="research", readiness=0.72):
+    now = utcnow()
+    published = iso(now - timedelta(hours=2))
+    url = "https://github.com/acme/local-7b"
+    cur = db.execute(
+        "INSERT INTO items (source_key, external_id, url, canonical_url, url_hash, "
+        "content_hash, title, author, body, published_at, fetched_at, engagement, comments, meta) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        ("lab", "lab:1", url, url, url_hash(url), content_hash(title, "body"),
+         title, "", "Open weights. pip install. Runs locally on RTX with GGUF.",
+         published, iso(now), 0, 0, "{}"),
+    )
+    item_id = cur.lastrowid
+    db.execute(
+        "INSERT INTO enrichment (item_id, summary, category, entities, tags, importance, "
+        "why, model, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+        (item_id, title, "model-release", jdump(["Acme"]), "[]", 0.8, "", "", iso(now)),
+    )
+    db.execute("INSERT OR IGNORE INTO sources (key, name, kind, tier) VALUES (?,?,?,?)",
+               ("lab", "Lab", "rss", "lab"))
+    db.execute(
+        "INSERT INTO judgments (item_id, quality, practicality, feasibility, usefulness, "
+        "readiness, verdict, reasons, artifacts, model, created_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        (item_id, 0.74, 0.70, 0.66, 0.70, readiness, verdict,
+         jdump(["names a fetchable artifact"]), jdump([url]), "", iso(now)),
+    )
+    return item_id
+
+
+class TestDeepResearcherFallback:
+    def test_writes_five_pages_without_a_model(self, db):
+        item_id = add_ready_item(db)
+        settings = Settings()
+        settings.research_budget = 2
+        settings.research_threshold = 0.60
+        client = OllamaClient(settings)
+        # Probe was never called; chat_model is empty so generate_text is a no-op.
+        researcher = DeepResearcher(settings, db, client)
+        result = asyncio.run(researcher.run(limit=1))
+        assert result["researched"] == 1
+        assert result["fallback"] == 1
+        assert db.scalar("SELECT COUNT(*) FROM research WHERE item_id=?", (item_id,)) == 1
+        slugs = [r["slug"] for r in db.query(
+            "SELECT slug FROM research_pages ORDER BY turn"
+        )]
+        assert slugs == ["source", "claims", "critique", "adapt", "lint"]
+        adapt = db.scalar(
+            "SELECT markdown FROM research_pages WHERE slug='adapt'"
+        )
+        assert adapt.startswith("# Adapt")
+
+    def test_skips_items_below_the_gate(self, db):
+        add_ready_item(db, verdict="watch", readiness=0.40)
+        settings = Settings()
+        settings.research_threshold = 0.62
+        researcher = DeepResearcher(settings, db, OllamaClient(settings))
+        result = asyncio.run(researcher.run(limit=4))
+        assert result["researched"] == 0
+        assert db.scalar("SELECT COUNT(*) FROM research") == 0
+
+    def test_does_not_rewrite_a_complete_brief(self, db):
+        item_id = add_ready_item(db)
+        settings = Settings()
+        researcher = DeepResearcher(settings, db, OllamaClient(settings))
+        first = asyncio.run(researcher.run(limit=1))
+        second = asyncio.run(researcher.run(limit=1))
+        assert first["researched"] == 1
+        assert second["researched"] == 0
+        assert db.scalar("SELECT COUNT(*) FROM research WHERE item_id=?", (item_id,)) == 1
+
+
+class TestJudgePass:
+    def test_heuristic_pass_scores_unenriched_shape(self, db):
+        add_ready_item(db)
+        # Delete the pre-seeded judgment so the heuristic pass has work to do.
+        db.execute("DELETE FROM judgments")
+        settings = Settings()
+        judge = Judge(settings, db, OllamaClient(settings))
+        result = asyncio.run(judge.run(limit=0))
+        assert result["judged"] == 1
+        row = db.one("SELECT verdict, readiness FROM judgments")
+        assert row["readiness"] > 0
+        assert row["verdict"] in ("skip", "watch", "research", "adopt")

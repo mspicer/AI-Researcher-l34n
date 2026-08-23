@@ -39,6 +39,13 @@ def _env_int(key: str, default: int) -> int:
         return default
 
 
+def _env_float(key: str, default: float) -> float:
+    try:
+        return float(_env(key) or default)
+    except ValueError:
+        return default
+
+
 @dataclass
 class Settings:
     host: str = "0.0.0.0"
@@ -52,6 +59,11 @@ class Settings:
     ollama_timeout: int = 180
     enrich_budget: int = 40
     enrich_time_budget: int = 900
+    judge_budget: int = 24
+    judge_time_budget: int = 400
+    research_budget: int = 4
+    research_time_budget: int = 900
+    research_threshold: float = 0.62
 
     user_agent: str = "ai-researcher/0.1 (+local dashboard)"
     fetch_concurrency: int = 8
@@ -83,6 +95,11 @@ class Settings:
             ollama_timeout=_env_int("OLLAMA_TIMEOUT", 180),
             enrich_budget=_env_int("AIR_ENRICH_BUDGET", 40),
             enrich_time_budget=_env_int("AIR_ENRICH_TIME_BUDGET", 900),
+            judge_budget=_env_int("AIR_JUDGE_BUDGET", 24),
+            judge_time_budget=_env_int("AIR_JUDGE_TIME_BUDGET", 400),
+            research_budget=_env_int("AIR_RESEARCH_BUDGET", 4),
+            research_time_budget=_env_int("AIR_RESEARCH_TIME_BUDGET", 900),
+            research_threshold=_env_float("AIR_RESEARCH_THRESHOLD", 0.62),
             user_agent=_env("AIR_USER_AGENT", "ai-researcher/0.1 (+local dashboard)"),
             fetch_concurrency=_env_int("AIR_FETCH_CONCURRENCY", 8),
             item_max_age_days=_env_int("AIR_ITEM_MAX_AGE_DAYS", 14),
