@@ -109,6 +109,33 @@ class TestArtifacts:
         assert any("huggingface.co/acme/thing" in a for a in found)
         assert "arxiv:2403.01234" in found
 
+    def test_strips_trailing_punctuation(self):
+        found = extract_artifacts("x", "See https://github.com/acme/thing).", "")
+        assert any(a.endswith("acme/thing") for a in found)
+        assert not any(a.endswith("thing).") for a in found)
+
+    def test_item_url_counts_when_it_is_the_artifact(self):
+        found = extract_artifacts("Weights", "now up", "https://huggingface.co/acme/mod")
+        assert "https://huggingface.co/acme/mod" in found
+
+    def test_blog_url_is_not_an_artifact(self):
+        found = extract_artifacts("Announcement", "we shipped", "https://acme.example/blog")
+        assert found == []
+
+    def test_dedupes_and_caps(self):
+        body = " ".join(
+            f"https://github.com/acme/r{i}" for i in range(8)
+        )
+        found = extract_artifacts("many", body + " https://github.com/acme/r0", "")
+        assert found[0].endswith("acme/r0")
+        assert found.count(found[0]) == 1
+        assert len(found) <= 6
+
+    def test_arxiv_abs_and_colon_forms(self):
+        found = extract_artifacts("p", "https://arxiv.org/abs/2401.12345 and arxiv:2401.99999", "")
+        assert "arxiv:2401.12345" in found
+        assert "arxiv:2401.99999" in found
+
 
 class TestBlend:
     def test_model_cannot_force_adopt_on_a_skip(self):

@@ -107,7 +107,7 @@ def db():
         yield Database(Path(tmp) / "t.db")
 
 
-def add_ready_item(db, *, title="Local 7B open weights on GitHub", verdict="research", readiness=0.72):
+def add_ready_item(db, *, title="Local 7B open weights on GitHub", verdict="research", readiness=0.72, source="lab"):
     now = utcnow()
     published = iso(now - timedelta(hours=2))
     url = "https://github.com/acme/local-7b"
@@ -115,7 +115,7 @@ def add_ready_item(db, *, title="Local 7B open weights on GitHub", verdict="rese
         "INSERT INTO items (source_key, external_id, url, canonical_url, url_hash, "
         "content_hash, title, author, body, published_at, fetched_at, engagement, comments, meta) "
         "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        ("lab", "lab:1", url, url, url_hash(url), content_hash(title, "body"),
+        (source, f"{source}:{title[:32]}:{url}", url, url, url_hash(url), content_hash(title, "body"),
          title, "", "Open weights. pip install. Runs locally on RTX with GGUF.",
          published, iso(now), 0, 0, "{}"),
     )
@@ -126,7 +126,7 @@ def add_ready_item(db, *, title="Local 7B open weights on GitHub", verdict="rese
         (item_id, title, "model-release", jdump(["Acme"]), "[]", 0.8, "", "", iso(now)),
     )
     db.execute("INSERT OR IGNORE INTO sources (key, name, kind, tier) VALUES (?,?,?,?)",
-               ("lab", "Lab", "rss", "lab"))
+               (source, source, "rss", "lab"))
     db.execute(
         "INSERT INTO judgments (item_id, quality, practicality, feasibility, usefulness, "
         "readiness, verdict, reasons, artifacts, model, created_at) "
@@ -191,3 +191,15 @@ class TestJudgePass:
         row = db.one("SELECT verdict, readiness FROM judgments")
         assert row["readiness"] > 0
         assert row["verdict"] in ("skip", "watch", "research", "adopt")
+
+    def test_force_rewrites_an_existing_brief(self, db):
+        add_ready_item(db)
+        settings = Settings()
+        researcher = DeepResearcher(settings, db, OllamaClient(settings))
+        asyncio.run(researcher.run(limit=1))
+        first_updated = db.scalar("SELECT updated_at FROM research")
+        result = asyncio.run(researcher.run(limit=1, force=True))
+        assert result["researched"] == 1
+        assert db.scalar("SELECT COUNT(*) FROM research") == 1
+        assert db.scalar("SELECT COUNT(*) FROM research_pages") == 5
+        assert db.scalar("SELECT updated_at FROM research") >= first_updated
