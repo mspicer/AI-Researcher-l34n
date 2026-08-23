@@ -12,7 +12,7 @@ from ..util import domain_of, humanize_age, local_day, parse_datetime, truncate,
 
 _VERDICT_RANK = {"adopt": 3, "research": 2, "watch": 1, "skip": 0, "": 0}
 _PAGE_PRIORITY = {"adapt": 0, "lint": 1, "source": 2, "claims": 3, "critique": 4}
-_DECISION_HEADING = re.compile(r"^##\s+Decision\b", re.IGNORECASE)
+_DECISION_HEADING = re.compile(r"^#{1,3}\s+Decision\b", re.IGNORECASE)
 
 ITEM_SELECT = """
     SELECT i.id, i.title, i.url, i.author, i.published_at, i.fetched_at,
@@ -108,11 +108,16 @@ def adapt_excerpt(markdown: str, *, limit: int = 220) -> str:
             if len(collected) >= 2:
                 break
     text = re.sub(r"\s+", " ", " ".join(collected)).strip()
-    # Decision lines are written as **adopt** — …; leftover stars look like a bug
-    # on every story card and Adapt row.
+    return truncate(_plain_excerpt(text), limit)
+
+
+def _plain_excerpt(text: str) -> str:
+    """Decision lines are markdown; story cards are not."""
+    text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
+    text = re.sub(r"`([^`]+)`", r"\1", text)
     text = re.sub(r"\*{1,3}([^*]+)\*{1,3}", r"\1", text)
-    text = text.replace("**", "").strip()
-    return truncate(text, limit)
+    text = re.sub(r"_{1,2}([^_]+)_{1,2}", r"\1", text)
+    return re.sub(r"[*_`]+", "", text).strip()
 
 
 def _rollup_judgment(items: list[dict[str, Any]]) -> dict[str, Any]:
@@ -133,13 +138,19 @@ def _rollup_judgment(items: list[dict[str, Any]]) -> dict[str, Any]:
         scored or items,
         key=lambda i: (float(i.get("readiness") or 0), _VERDICT_RANK.get(i.get("verdict") or "", 0)),
     )
-    researched = next((i for i in items if i.get("research_id")), None)
+    researched = [i for i in items if i.get("research_id")]
     artifacts: list[str] = []
     for item in items:
         for art in item.get("artifacts") or []:
             if art not in artifacts:
                 artifacts.append(art)
-    carrier = researched or best
+    carrier = max(
+        researched,
+        key=lambda i: (
+            float(i.get("readiness") or 0),
+            _VERDICT_RANK.get(i.get("verdict") or "", 0),
+        ),
+    ) if researched else best
     return {
         "quality": best["quality"],
         "practicality": best["practicality"],
@@ -169,6 +180,10 @@ def top_stories(
         where.append("c.source_count >= ?")
         params.append(min_sources)
 
+    # Ready is a filter, not a prefix of the scoreboard. Fetch a wider
+    # window so five viral teases cannot hide the one implementable story,
+    # then sort and clip after the gate.
+    fetch_limit = limit if not ready else max(limit * 5, 80)
     rows = db.query(
         f"""
         SELECT c.id, c.label, c.summary, c.category, c.score, c.size,
@@ -178,7 +193,7 @@ def top_stories(
         ORDER BY c.score DESC
         LIMIT ?
         """,
-        tuple(params + [limit]),
+        tuple(params + [fetch_limit]),
     )
 
     stories = []
@@ -216,6 +231,16 @@ def top_stories(
             **judged,
             "adapt_excerpt": "",
         })
+    if ready:
+        stories.sort(
+            key=lambda s: (
+                _VERDICT_RANK.get(s.get("verdict") or "", 0),
+                float(s.get("readiness") or 0),
+                1 if s.get("research_id") else 0,
+            ),
+            reverse=True,
+        )
+        stories = stories[:limit]
     _attach_adapt_excerpts(db, stories)
     return stories
 
@@ -593,4 +618,9 @@ def get_research(db: Database, research_id: int) -> dict[str, Any] | None:
 
 def ready_briefs(db: Database, *, limit: int = 8) -> list[dict[str, Any]]:
     """Stories a practitioner should look at first — adopt, then spike."""
-    return list_research(db, limit=limit)
+    briefs = list_research(db, limit=max(limit * 3, 24))
+    return [
+        b for b in briefs
+        if b["decision"] in ("adopt", "spike")
+        or b["verdict"] in ("research", "adopt")
+    ][:limit]

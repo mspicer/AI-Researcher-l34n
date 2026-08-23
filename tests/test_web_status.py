@@ -167,6 +167,62 @@ class TestDashboardChrome:
     def test_missing_research_brief_is_404(self, client: TestClient):
         assert client.get("/adapt/999").status_code == 404
 
+    def test_adapt_html_does_not_leak_markdown_stars(self, app_env):
+        """Regression: story cards used to render 'adopt** — …'."""
+        from datetime import timedelta
+
+        from ai_researcher.db import Database, jdump
+        from ai_researcher.util import content_hash, iso, url_hash, utcnow
+
+        app, settings = app_env
+        db = Database(settings.db_path)
+        now = utcnow()
+        url = "https://github.com/acme/local-7b"
+        cur = db.execute(
+            "INSERT INTO items (source_key, external_id, url, canonical_url, url_hash, "
+            "content_hash, title, author, body, published_at, fetched_at, engagement, comments, meta) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            ("lab", "lab:7b", url, url, url_hash(url), content_hash("7B", ""),
+             "Local 7B open weights", "", "weights", iso(now - timedelta(hours=2)),
+             iso(now), 0, 0, "{}"),
+        )
+        item_id = cur.lastrowid
+        db.execute(
+            "INSERT INTO enrichment (item_id, summary, category, entities, tags, importance, "
+            "why, model, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+            (item_id, "Local 7B", "model-release", "[]", "[]", 0.8, "", "", iso(now)),
+        )
+        db.execute(
+            "INSERT INTO judgments (item_id, quality, practicality, feasibility, usefulness, "
+            "readiness, verdict, reasons, artifacts, model, created_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (item_id, 0.8, 0.8, 0.8, 0.8, 0.86, "adopt", "[]",
+             jdump([url]), "", iso(now)),
+        )
+        db.execute(
+            "INSERT INTO research (item_id, title, status, readiness, verdict, decision, "
+            "model, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+            (item_id, "Local 7B open weights", "complete", 0.86, "adopt", "adopt",
+             "", iso(now), iso(now)),
+        )
+        rid = db.scalar("SELECT id FROM research WHERE item_id=?", (item_id,))
+        db.execute(
+            "INSERT INTO research_pages (research_id, slug, title, markdown, turn, created_at) "
+            "VALUES (?,?,?,?,?,?)",
+            (rid, "adapt", "Adapt",
+             "# Adapt\n## Decision\n**adopt** — serve the Q4 this week.\n",
+             4, iso(now)),
+        )
+        db.close()
+
+        with TestClient(app) as client:
+            html = client.get("/adapt").text
+            assert "adopt — serve the Q4 this week." in html
+            assert "adopt**" not in html
+            detail = client.get(f"/adapt/{rid}").text
+            assert "Do this week" in detail
+            assert "serve the Q4 this week" in detail
+
 
 class TestRefreshEndpoint:
     def test_refresh_starts_without_real_ingest(self, client: TestClient, monkeypatch):

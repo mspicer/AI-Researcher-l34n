@@ -31,6 +31,13 @@ log = logging.getLogger("ai_researcher.research")
 DECISION_RE = re.compile(
     r"\b(adopt|spike|watch|skip)\b", re.IGNORECASE
 )
+_DECISION_HEADING = re.compile(
+    r"^#{1,3}\s+(?:Decision|Final verdict)\b", re.IGNORECASE
+)
+_NEXT_HEADING = re.compile(r"^#{1,3}\s+\S")
+_BOLD_DECISION = re.compile(
+    r"\*\*\s*(adopt|spike|watch|skip)\s*\*\*", re.IGNORECASE
+)
 SCORES_RE = re.compile(
     r"scores:\s*Q=([0-9.]+)\s*P=([0-9.]+)\s*F=([0-9.]+)\s*U=([0-9.]+)",
     re.IGNORECASE,
@@ -72,8 +79,38 @@ def _prompt(turn: dict[str, Any], candidate: dict[str, Any], pages: dict[str, st
 
 
 def parse_decision(markdown: str, default: str = "watch") -> str:
-    """Last explicit adopt/spike/watch/skip in the page wins."""
-    matches = list(DECISION_RE.finditer(markdown or ""))
+    """Last explicit call in a Decision / Final verdict block wins.
+
+    The rest of the page talks about skip/watch as risks ('file this as
+    watch', 'an explicit skip'). Those must not overwrite the heading.
+    """
+    text = markdown or ""
+    blocks: list[str] = []
+    taking = False
+    buf: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if _DECISION_HEADING.match(stripped):
+            if taking:
+                blocks.append("\n".join(buf))
+            taking = True
+            buf = []
+            continue
+        if taking and _NEXT_HEADING.match(stripped):
+            blocks.append("\n".join(buf))
+            taking = False
+            buf = []
+            continue
+        if taking:
+            buf.append(line)
+    if taking:
+        blocks.append("\n".join(buf))
+
+    haystack = "\n".join(blocks) if blocks else text
+    bold = list(_BOLD_DECISION.finditer(haystack))
+    if bold:
+        return bold[-1].group(1).lower()
+    matches = list(DECISION_RE.finditer(haystack))
     if not matches:
         return default
     return matches[-1].group(1).lower()
@@ -181,22 +218,32 @@ class DeepResearcher:
         the primary item so the brief survives. This just restores the join.
         """
         day = day or local_day()
+        # Prefer a primary membership, but a brief often lives on the quieter
+        # implementable member. Clusters are rebuilt every run and SET NULL
+        # the old cluster_id, so skipping non-primaries orphaned those briefs.
         rows = self.db.query(
             """
-            SELECT r.id, r.item_id, ci.cluster_id
+            SELECT r.id,
+                   (
+                       SELECT ci.cluster_id
+                       FROM cluster_items ci
+                       JOIN clusters c ON c.id = ci.cluster_id AND c.day = ?
+                       WHERE ci.item_id = r.item_id
+                       ORDER BY ci.is_primary DESC
+                       LIMIT 1
+                   ) AS cluster_id
             FROM research r
-            JOIN cluster_items ci ON ci.item_id = r.item_id AND ci.is_primary = 1
-            JOIN clusters c ON c.id = ci.cluster_id AND c.day = ?
             """,
             (day,),
         )
+        linked = [(row["cluster_id"], row["id"]) for row in rows if row["cluster_id"]]
         with self.db.tx() as conn:
-            for row in rows:
+            for cluster_id, research_id in linked:
                 conn.execute(
                     "UPDATE research SET cluster_id=? WHERE id=?",
-                    (row["cluster_id"], row["id"]),
+                    (cluster_id, research_id),
                 )
-        return len(rows)
+        return len(linked)
 
     def _candidates(self, limit: int, *, force: bool) -> list[dict[str, Any]]:
         if limit <= 0:
