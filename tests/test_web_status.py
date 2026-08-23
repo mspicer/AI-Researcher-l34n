@@ -106,6 +106,8 @@ class TestDashboardChrome:
         assert 'data-stat="items_24h"' in html
         assert 'data-stat="stories_today"' in html
         assert 'data-stat="sources_ok"' in html
+        assert 'data-stat="research_briefs"' in html
+        assert "Ready</a>" in html or ">Ready<" in html
 
     def test_app_js_wires_verbose_polling(self, client: TestClient):
         js = client.get("/static/app.js").text
@@ -148,8 +150,19 @@ class TestDashboardChrome:
         html = client.get("/").text
         assert 'href="/adapt"' in html
         assert "Ready to build" in html
+        assert "ready=1" in html
         js = client.get("/static/app.js").text
         assert "/adapt" in js
+
+    def test_feed_can_sort_by_readiness(self, client: TestClient):
+        html = client.get("/feed").text
+        assert "Most ready" in html
+        assert 'value="ready"' in html
+
+    def test_adapt_list_leads_with_the_week_plan(self, client: TestClient):
+        html = client.get("/adapt").text
+        assert "Implementation briefs" in html
+        assert "Do this week" not in html  # that's the detail page
 
     def test_missing_research_brief_is_404(self, client: TestClient):
         assert client.get("/adapt/999").status_code == 404

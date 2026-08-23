@@ -34,13 +34,23 @@
         {% endif %}
       {% endfor %}
       <a class="chip {{ 'on' if min_sources > 1 }}"
-         href="/?min_sources={{ 1 if min_sources > 1 else 3 }}{% if active_category %}&category={{ active_category }}{% endif %}"
+         href="/?min_sources={{ 1 if min_sources > 1 else 3 }}{% if active_category %}&category={{ active_category }}{% endif %}{% if ready_only %}&ready=1{% endif %}"
          title="Only stories corroborated by 3+ independent sources">Corroborated</a>
+      <a class="chip {{ 'on' if ready_only }}"
+         href="/?ready={{ 0 if ready_only else 1 }}{% if active_category %}&category={{ active_category }}{% endif %}{% if min_sources > 1 %}&min_sources={{ min_sources }}{% endif %}"
+         title="Stories that cleared the quality gate">Ready</a>
     </div>
 
     {# ── ranked stories ── #}
     {% if stories %}
       {% for s in stories %}{{ story_card(s, loop.index) }}{% endfor %}
+    {% elif ready_only %}
+      <div class="panel empty">
+        <h3>Nothing ready today</h3>
+        <p>No story has cleared the quality gate yet. Open
+        <a href="/adapt">Adapt</a> for earlier briefs, or run
+        <code>ai-researcher research</code>.</p>
+      </div>
     {% elif fallback_items %}
       <section class="panel">
         <h3><span>Latest items</span><span>not yet clustered</span></h3>
@@ -76,7 +86,7 @@
     </section>
 
     <section class="panel">
-      <h3><span>Ready to build</span><span>gated research</span></h3>
+      <h3><span>Ready to build</span><span>this week</span></h3>
       <div class="body">
         {% if ready %}
           {% for b in ready %}
@@ -84,14 +94,15 @@
             <div class="n">
               <a href="/adapt/{{ b.id }}">{{ b.title }}</a>
               <span class="s">{{ b.decision or b.verdict }} · {{ '%.2f'|format(b.readiness) }} · {{ b.age }}</span>
+              {% if b.excerpt %}<span class="s">{{ b.excerpt }}</span>{% endif %}
             </div>
           </div>
           {% endfor %}
-          <p style="margin:10px 0 0"><a href="/adapt">All adaptation briefs →</a></p>
+          <p style="margin:10px 0 0"><a href="/adapt">All implementation briefs →</a></p>
         {% else %}
         <p style="color:var(--text-dim);font-size:13px;margin:0">
-          No story has cleared the readiness gate yet. After a run, high-quality
-          items get a multi-turn lab brief here.</p>
+          After a run, stories that are specific, practical, and feasible get
+          a week plan here.</p>
         {% endif %}
       </div>
     </section>

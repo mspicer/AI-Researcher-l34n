@@ -148,10 +148,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         day: str | None = Query(None),
         category: str | None = Query(None),
         min_sources: int = Query(0),
+        ready: int = Query(0),
     ):
         target_day = day or local_day()
+        ready_only = bool(ready)
         stories = Q.top_stories(
-            db, day=target_day, limit=40, category=category, min_sources=min_sources
+            db, day=target_day, limit=40, category=category,
+            min_sources=min_sources, ready=ready_only,
         )
         # A fresh install has items but no clusters until the first analyse pass;
         # show the raw firehose rather than an empty page.
@@ -173,6 +176,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 counts=Q.category_counts(db, hours=24),
                 active_category=category,
                 min_sources=min_sources,
+                ready_only=ready_only,
             ),
         )
 

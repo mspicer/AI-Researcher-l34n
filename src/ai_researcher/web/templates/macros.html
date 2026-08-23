@@ -11,6 +11,16 @@
 {% endif %}
 {%- endmacro %}
 
+{% macro artifact_pills(artifacts) -%}
+{% for a in artifacts[:6] %}
+  {% if a.startswith('http') %}
+    <a class="pill lab" href="{{ a }}" target="_blank" rel="noopener">{{ a }}</a>
+  {% else %}
+    <span class="pill">{{ a }}</span>
+  {% endif %}
+{% endfor %}
+{%- endmacro %}
+
 {% macro meters(item) -%}
 {% if item.readiness %}
 <div class="meters" title="quality / practicality / feasibility / usefulness">
@@ -62,7 +72,7 @@
 
 {# A clustered story: the primary item plus everything else covering it. #}
 {% macro story_card(story, rank) -%}
-<article class="story {{ 'hot' if story.source_count >= 3 }}">
+<article class="story {{ 'hot' if story.source_count >= 3 or story.research_id }}">
   <div class="story-head">
     <span class="rank">{{ rank }}</span>
     <h3><a href="{{ story.primary.url }}" target="_blank" rel="noopener">{{ story.label }}</a></h3>
@@ -70,7 +80,11 @@
   </div>
 
   {% if story.summary %}<p class="sum">{{ story.summary }}</p>{% endif %}
-  {% if story.primary.why %}<p class="why">{{ story.primary.why }}</p>{% endif %}
+  {% if story.adapt_excerpt %}
+    <p class="why">{{ story.adapt_excerpt }}</p>
+  {% elif story.primary.why %}
+    <p class="why">{{ story.primary.why }}</p>
+  {% endif %}
   {{ meters(story) }}
 
   <div class="meta">
@@ -86,7 +100,7 @@
       <a class="pill" href="/search?q={{ e|urlencode }}">{{ e }}</a>
     {% endfor %}
     {% if story.research_id %}
-      <a class="pill lab" href="/adapt/{{ story.research_id }}">lab notes →</a>
+      <a class="pill lab" href="/adapt/{{ story.research_id }}">{{ story.research_decision or 'week plan' }} →</a>
     {% endif %}
   </div>
 

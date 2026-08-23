@@ -1,18 +1,18 @@
 {% extends "base.html" %}
-{% from "macros.html" import badge, verdict_pill, meters %}
+{% from "macros.html" import badge, verdict_pill, meters, artifact_pills %}
 {% block title %}AI Researcher — Adapt{% endblock %}
 
 {% block content %}
 <section class="panel">
   <h3>
-    <span>Adaptation briefs</span>
-    <span>Karpathy deep research · quality-gated</span>
+    <span>Implementation briefs</span>
+    <span>quality-gated · do this week</span>
   </h3>
   <div class="body">
     <p style="margin:0 0 12px;color:var(--text-mid);font-size:14px">
-      Stories that scored high enough on quality, practicality, feasibility and
-      usefulness get a five-turn wiki: ingest, claims, critique, adapt, lint.
-      The Adapt page is the one meant to be implemented.
+      Stories that are specific, practical, and feasible get a week plan:
+      who it's for, the first experiment, and what done looks like.
+      Open a brief and start with <strong>Adapt</strong>.
     </p>
     <div class="chips">
       <a class="chip {{ 'on' if not active_verdict }}" href="/adapt">All</a>
@@ -25,12 +25,16 @@
 
 {% if briefs %}
   {% for b in briefs %}
-  <article class="story {{ 'hot' if b.verdict=='adopt' }}">
+  <article class="story {{ 'hot' if b.decision=='adopt' or b.verdict=='adopt' }}">
     <div class="story-head">
       <span class="rank">{{ loop.index }}</span>
       <h3><a href="/adapt/{{ b.id }}">{{ b.title }}</a></h3>
     </div>
-    {% if b.summary %}<p class="sum">{{ b.summary }}</p>{% endif %}
+    {% if b.excerpt %}
+      <p class="why">{{ b.excerpt }}</p>
+    {% elif b.summary %}
+      <p class="sum">{{ b.summary }}</p>
+    {% endif %}
     {{ meters(b) }}
     <div class="meta">
       {{ badge(b.category, b.category_label) }}
@@ -40,6 +44,7 @@
       {% if b.model %}<span class="dotsep"></span><span>{{ b.model }}</span>
       {% else %}<span class="dotsep"></span><span>template</span>{% endif %}
       <a class="pill" href="{{ b.url }}" target="_blank" rel="noopener">source</a>
+      {{ artifact_pills(b.artifacts) }}
     </div>
   </article>
   {% endfor %}
@@ -47,7 +52,7 @@
   <div class="panel empty">
     <h3>No briefs yet</h3>
     <p>Run <code>ai-researcher run</code>. Items that clear the readiness
-    gate get a lab brief automatically. Or <code>ai-researcher research</code>
+    gate get a week plan automatically. Or <code>ai-researcher research</code>
     to judge what is already stored.</p>
   </div>
 {% endif %}

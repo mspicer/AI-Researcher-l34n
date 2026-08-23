@@ -225,6 +225,12 @@ def cmd_doctor(args) -> int:
     print(f"  judged         : {stats.get('judged', 0)}  "
           f"(adopt {stats.get('adopt', 0)} · research {stats.get('research_ready', 0)})")
     print(f"  lab briefs     : {stats.get('research_briefs', 0)}")
+    if stats.get("judged") and not stats.get("research_briefs"):
+        print("                   nothing cleared AIR_RESEARCH_THRESHOLD — "
+              "briefs stay empty until a story is specific and adoptable")
+    print(f"  research gate  : {settings.research_threshold}  "
+          f"budget {settings.research_budget}  "
+          f"time {settings.research_time_budget}s")
     print(f"  sources ok     : {stats['sources_ok']}/{stats['sources_total']}"
           f"  ({stats['sources_failing']} failing)")
     print(f"  last run       : {stats['last_run']} ({stats['last_run_status']})")

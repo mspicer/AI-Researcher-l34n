@@ -129,8 +129,10 @@ Only stories at or above `AIR_RESEARCH_THRESHOLD` (default 0.62) with a
 five model calls per story. With no model the same pages are filed as a
 structured digest so the Adapt tab is never blank.
 
-Open `/adapt` (or press `a`) for the lab notes. A story that already has a
-brief links there as **lab notes**.
+Open `/adapt` (or press `a`) for the week plans. The dashboard **Ready**
+chip, the firehose **Most ready** sort, and the daily brief's
+**Ready to build** section all read the same gate. A story that already
+has a brief links there as **week plan**.
 
 ## API access
 

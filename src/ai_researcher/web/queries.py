@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import re
 from datetime import timedelta
 from typing import Any
 
 from ..config import CATEGORY_LABELS
 from ..db import Database, jload
-from ..util import domain_of, humanize_age, local_day, parse_datetime, utcnow
+from ..util import domain_of, humanize_age, local_day, parse_datetime, truncate, utcnow
+
+_VERDICT_RANK = {"adopt": 3, "research": 2, "watch": 1, "skip": 0, "": 0}
+_PAGE_PRIORITY = {"adapt": 0, "lint": 1, "source": 2, "claims": 3, "critique": 4}
+_DECISION_HEADING = re.compile(r"^##\s+Decision\b", re.IGNORECASE)
 
 ITEM_SELECT = """
     SELECT i.id, i.title, i.url, i.author, i.published_at, i.fetched_at,
@@ -86,9 +91,67 @@ def _shape_item(row, now=None) -> dict[str, Any]:
     return item
 
 
+def adapt_excerpt(markdown: str, *, limit: int = 220) -> str:
+    """The Adapt page's Decision paragraph — what a practitioner reads first."""
+    if not markdown:
+        return ""
+    taking = False
+    collected: list[str] = []
+    for line in markdown.splitlines():
+        if _DECISION_HEADING.match(line.strip()):
+            taking = True
+            continue
+        if taking and line.startswith("#"):
+            break
+        if taking and line.strip():
+            collected.append(line.strip().strip("*").strip())
+            if len(collected) >= 2:
+                break
+    text = re.sub(r"\s+", " ", " ".join(collected)).strip()
+    return truncate(text, limit)
+
+
+def _rollup_judgment(items: list[dict[str, Any]]) -> dict[str, Any]:
+    """A story inherits the best member judgment, not just the primary's.
+
+    The primary is chosen for attention (lab post, high engagement). The
+    member that named a repo can easily be a quieter source — using only
+    the primary would hide the thing you can actually implement.
+    """
+    if not items:
+        return {
+            "quality": 0.0, "practicality": 0.0, "feasibility": 0.0,
+            "usefulness": 0.0, "readiness": 0.0, "verdict": "",
+            "research_id": 0, "research_decision": "", "artifacts": [],
+        }
+    scored = [i for i in items if i.get("readiness")]
+    best = max(
+        scored or items,
+        key=lambda i: (float(i.get("readiness") or 0), _VERDICT_RANK.get(i.get("verdict") or "", 0)),
+    )
+    researched = next((i for i in items if i.get("research_id")), None)
+    artifacts: list[str] = []
+    for item in items:
+        for art in item.get("artifacts") or []:
+            if art not in artifacts:
+                artifacts.append(art)
+    carrier = researched or best
+    return {
+        "quality": best["quality"],
+        "practicality": best["practicality"],
+        "feasibility": best["feasibility"],
+        "usefulness": best["usefulness"],
+        "readiness": best["readiness"],
+        "verdict": best["verdict"],
+        "research_id": carrier["research_id"],
+        "research_decision": carrier["research_decision"],
+        "artifacts": artifacts[:8],
+    }
+
+
 def top_stories(
     db: Database, *, day: str | None = None, limit: int = 30,
-    category: str | None = None, min_sources: int = 0,
+    category: str | None = None, min_sources: int = 0, ready: bool = False,
 ) -> list[dict[str, Any]]:
     day = day or local_day()
     now = utcnow()
@@ -128,6 +191,9 @@ def top_stories(
         items = [_shape_item(r, now) for r in item_rows]
         if not items:
             continue
+        judged = _rollup_judgment(items)
+        if ready and judged["verdict"] not in ("research", "adopt") and not judged["research_id"]:
+            continue
         stories.append({
             "id": row["id"],
             "label": row["label"],
@@ -143,16 +209,26 @@ def top_stories(
             "items": items,
             "others": items[1:],
             "sources": sorted({i["source_name"] for i in items}),
-            "quality": items[0]["quality"],
-            "practicality": items[0]["practicality"],
-            "feasibility": items[0]["feasibility"],
-            "usefulness": items[0]["usefulness"],
-            "readiness": items[0]["readiness"],
-            "verdict": items[0]["verdict"],
-            "research_id": items[0]["research_id"],
-            "research_decision": items[0]["research_decision"],
+            **judged,
+            "adapt_excerpt": "",
         })
+    _attach_adapt_excerpts(db, stories)
     return stories
+
+
+def _attach_adapt_excerpts(db: Database, stories: list[dict[str, Any]]) -> None:
+    ids = [s["research_id"] for s in stories if s.get("research_id")]
+    if not ids:
+        return
+    placeholders = ",".join("?" * len(ids))
+    rows = db.query(
+        f"SELECT research_id, markdown FROM research_pages "
+        f"WHERE slug='adapt' AND research_id IN ({placeholders})",
+        tuple(ids),
+    )
+    excerpts = {r["research_id"]: adapt_excerpt(r["markdown"]) for r in rows}
+    for story in stories:
+        story["adapt_excerpt"] = excerpts.get(story.get("research_id") or 0, "")
 
 
 def list_items(
@@ -190,6 +266,7 @@ def list_items(
         "recent": "COALESCE(i.published_at, i.fetched_at) DESC",
         "important": "e.importance DESC, COALESCE(i.published_at, i.fetched_at) DESC",
         "engagement": "i.engagement DESC",
+        "ready": "COALESCE(j.readiness, 0) DESC, COALESCE(i.published_at, i.fetched_at) DESC",
     }.get(order, "COALESCE(i.published_at, i.fetched_at) DESC")
 
     sql = ITEM_SELECT
@@ -308,6 +385,8 @@ def recent_runs(db: Database, limit: int = 20) -> list[dict[str, Any]]:
             "sources_failed": ingest.get("failed", 0),
             "enriched": (stats.get("enrich") or {}).get("enriched", 0),
             "clusters": (stats.get("cluster") or {}).get("clusters", 0),
+            "judged": (stats.get("judge") or {}).get("judged", 0),
+            "research_briefs": (stats.get("research") or {}).get("researched", 0),
             "errors": (ingest.get("errors") or [])[:8],
             "error": stats.get("error", ""),
         })
@@ -394,13 +473,22 @@ def list_research(
                COALESCE(j.practicality, 0) AS practicality,
                COALESCE(j.feasibility, 0) AS feasibility,
                COALESCE(j.usefulness, 0) AS usefulness,
+               COALESCE(j.artifacts, '[]') AS artifacts,
+               COALESCE(p.markdown, '') AS adapt_markdown,
                i.url
         FROM research r
         JOIN items i ON i.id = r.item_id
         LEFT JOIN enrichment e ON e.item_id = i.id
         LEFT JOIN judgments j ON j.item_id = i.id
+        LEFT JOIN research_pages p ON p.research_id = r.id AND p.slug = 'adapt'
         WHERE {' AND '.join(where)}
-        ORDER BY r.readiness DESC, r.updated_at DESC
+        ORDER BY CASE r.decision
+                    WHEN 'adopt' THEN 0
+                    WHEN 'spike' THEN 1
+                    WHEN 'watch' THEN 2
+                    WHEN 'skip' THEN 3
+                    ELSE 4 END,
+                 r.readiness DESC, r.updated_at DESC
         LIMIT ?
         """,
         tuple(params + [limit]),
@@ -414,6 +502,8 @@ def list_research(
             "title": row["title"],
             "url": row["url"],
             "summary": row["summary"],
+            "excerpt": adapt_excerpt(row["adapt_markdown"]),
+            "artifacts": jload(row["artifacts"], []),
             "category": row["category"] or "opinion-analysis",
             "category_label": CATEGORY_LABELS.get(row["category"], "Other"),
             "readiness": round(float(row["readiness"] or 0), 2),
@@ -462,6 +552,13 @@ def get_research(db: Database, research_id: int) -> dict[str, Any] | None:
         """,
         (research_id,),
     )
+    pages_out = sorted(
+        (
+            {"slug": p["slug"], "title": p["title"], "markdown": p["markdown"], "turn": p["turn"]}
+            for p in pages
+        ),
+        key=lambda p: _PAGE_PRIORITY.get(p["slug"], 9),
+    )
     return {
         "id": row["id"],
         "item_id": row["item_id"],
@@ -483,10 +580,10 @@ def get_research(db: Database, research_id: int) -> dict[str, Any] | None:
         "reasons": jload(row["reasons"], []),
         "artifacts": jload(row["artifacts"], []),
         "age": humanize_age(parse_datetime(row["updated_at"])),
-        "pages": [
-            {"slug": p["slug"], "title": p["title"], "markdown": p["markdown"], "turn": p["turn"]}
-            for p in pages
-        ],
+        "excerpt": adapt_excerpt(
+            next((p["markdown"] for p in pages_out if p["slug"] == "adapt"), "")
+        ),
+        "pages": pages_out,
     }
 
 

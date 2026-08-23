@@ -35,6 +35,9 @@ PROMPT = """Below are today's top AI stories, already ranked. Write the briefing
 
 Rising terms today: {rising}
 
+Ready to build (already quality-gated; only mention these in the last section):
+{ready}
+
 Write exactly this structure in Markdown:
 
 ## The one thing
@@ -48,8 +51,12 @@ stories, not variations of the first one.
 2-3 bullets on things that are less loud but likely to matter — a paper, a
 tool, a shift in direction.
 
+## Ready to build
+If ready items are listed above, 2-3 bullets. Each: **adopt** or **spike**
+then one sentence on the first experiment. Omit this section if none.
+
 Rules: no preamble, no closing summary, no hedging phrases like "it seems".
-Refer only to what is listed above. Keep the whole thing under 320 words.
+Refer only to what is listed above. Keep the whole thing under 360 words.
 Start your reply with "## The one thing" — no text before it.
 """
 
@@ -104,7 +111,42 @@ def _render_prompt_stories(stories: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def _fallback_markdown(stories: list[dict[str, Any]], rising: list[dict[str, Any]]) -> str:
+def _collect_ready(db: Database, limit: int = 5) -> list[dict[str, Any]]:
+    rows = db.query(
+        """
+        SELECT r.title, r.decision, r.verdict, r.readiness
+        FROM research r
+        WHERE r.status = 'complete'
+        ORDER BY CASE r.decision
+                    WHEN 'adopt' THEN 0
+                    WHEN 'spike' THEN 1
+                    ELSE 2 END,
+                 r.readiness DESC
+        LIMIT ?
+        """,
+        (limit,),
+    )
+    return [dict(r) for r in rows]
+
+
+def _render_ready(ready: list[dict[str, Any]]) -> str:
+    if not ready:
+        return "none"
+    lines = []
+    for item in ready:
+        decision = item.get("decision") or item.get("verdict") or "watch"
+        lines.append(
+            f"- [{decision}] {truncate(item.get('title') or '', 110)} "
+            f"(readiness {float(item.get('readiness') or 0):.2f})"
+        )
+    return "\n".join(lines)
+
+
+def _fallback_markdown(
+    stories: list[dict[str, Any]],
+    rising: list[dict[str, Any]],
+    ready: list[dict[str, Any]] | None = None,
+) -> str:
     if not stories:
         return (
             "## No stories yet\n\n"
@@ -124,6 +166,11 @@ def _fallback_markdown(stories: list[dict[str, Any]], rising: list[dict[str, Any
     if rising:
         parts.append("\n## Rising terms\n")
         parts.append(", ".join(f"`{t['term']}` ({t['lift']}×)" for t in rising[:8]))
+    if ready:
+        parts.append("\n## Ready to build\n")
+        for item in ready[:4]:
+            decision = item.get("decision") or item.get("verdict") or "spike"
+            parts.append(f"- **{decision}** — {truncate(item.get('title') or '', 140)}")
     parts.append(
         "\n\n---\n*Generated without a language model — install an Ollama chat "
         "model for written analysis.*"
@@ -143,6 +190,7 @@ async def generate_brief(
 
     stories = _collect_stories(db, day)
     rising = rising_topics(db, day, limit=10)
+    ready = _collect_ready(db)
 
     markdown = ""
     model_used = ""
@@ -150,11 +198,12 @@ async def generate_brief(
         prompt = PROMPT.format(
             stories=_render_prompt_stories(stories),
             rising=", ".join(f"{t['term']} ({t['lift']}x)" for t in rising[:8]) or "none",
+            ready=_render_ready(ready),
         )
         # The brief is the single most valuable model output of a run, and it
         # is one call per day — worth a much longer leash than per-item work.
         text = await client.generate_text(
-            prompt, system=SYSTEM, num_predict=750, temperature=0.35,
+            prompt, system=SYSTEM, num_predict=850, temperature=0.35,
             timeout=max(600.0, float(client.settings.ollama_timeout)),
         )
         if text and len(text) > 120:
@@ -162,7 +211,7 @@ async def generate_brief(
             model_used = client.chat_model
 
     if not markdown:
-        markdown = _fallback_markdown(stories, rising)
+        markdown = _fallback_markdown(stories, rising, ready)
 
     db.execute(
         "INSERT INTO briefs (day, markdown, model, created_at) VALUES (?,?,?,?) "

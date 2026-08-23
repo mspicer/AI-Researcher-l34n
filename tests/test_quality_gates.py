@@ -608,3 +608,89 @@ class TestResearchAdmission:
         forced = researcher._candidates(4, force=True)
         assert len(forced) == 1
         assert forced[0]["item_id"] == item_id
+
+
+class TestStoryRollup:
+    """A clustered story must inherit the member you can actually implement."""
+
+    def test_rollup_prefers_the_ready_member(self):
+        from ai_researcher.web.queries import _rollup_judgment
+
+        primary = {
+            "quality": 0.4, "practicality": 0.2, "feasibility": 0.3,
+            "usefulness": 0.4, "readiness": 0.34, "verdict": "watch",
+            "research_id": 0, "research_decision": "", "artifacts": [],
+        }
+        implementable = {
+            "quality": 0.7, "practicality": 0.8, "feasibility": 0.7,
+            "usefulness": 0.7, "readiness": 0.72, "verdict": "research",
+            "research_id": 9, "research_decision": "spike",
+            "artifacts": ["https://github.com/acme/x"],
+        }
+        rolled = _rollup_judgment([primary, implementable])
+        assert rolled["readiness"] == 0.72
+        assert rolled["verdict"] == "research"
+        assert rolled["research_id"] == 9
+        assert "https://github.com/acme/x" in rolled["artifacts"]
+
+    def test_adapt_excerpt_reads_the_decision(self):
+        from ai_researcher.web.queries import adapt_excerpt
+
+        md = "# Adapt\n## Decision\n**spike** — clone the repo and run the README.\n\n## Who\nML infra."
+        assert "spike" in adapt_excerpt(md).lower()
+        assert "clone the repo" in adapt_excerpt(md)
+
+    def test_ready_filter_hides_watch_stories(self, db):
+        from ai_researcher.trends.cluster import build_clusters
+        from ai_researcher.web import queries as Q
+        from ai_researcher.util import local_day
+
+        seed_item(db, title="OpenAI ships GPT-5", url="https://o.ai/gpt5",
+                  source="a", verdict="watch", readiness=0.40)
+        seed_item(db, title="Local 7B open weights", url="https://github.com/acme/7b",
+                  source="b", verdict="research", readiness=0.70)
+        build_clusters(db)
+        all_stories = Q.top_stories(db, day=local_day(), limit=20)
+        ready = Q.top_stories(db, day=local_day(), limit=20, ready=True)
+        assert len(all_stories) >= 2
+        assert all(
+            s["verdict"] in ("research", "adopt") or s["research_id"]
+            for s in ready
+        )
+        assert any(s["verdict"] == "research" for s in ready)
+
+    def test_firehose_ready_order_puts_high_readiness_first(self, db):
+        from ai_researcher.web import queries as Q
+
+        seed_item(db, title="low", verdict="watch", readiness=0.30, hours_ago=1)
+        seed_item(db, title="high", verdict="adopt", readiness=0.88, hours_ago=5)
+        items = Q.list_items(db, hours=48, order="ready", limit=10)
+        titles = [i["title"] for i in items]
+        assert titles.index("high") < titles.index("low")
+
+
+class TestBriefReadySection:
+    def test_fallback_brief_lists_ready_items(self):
+        from ai_researcher.trends.brief import _fallback_markdown
+
+        stories = [{
+            "label": "Someone shipped a model",
+            "summary": "A release.",
+            "category": "model-release",
+            "source_count": 2,
+        }]
+        ready = [{"title": "vLLM 0.8", "decision": "adopt", "readiness": 0.84}]
+        md = _fallback_markdown(stories, [], ready)
+        assert "## Ready to build" in md
+        assert "vLLM 0.8" in md
+        assert "adopt" in md
+
+    def test_fallback_omits_ready_section_when_empty(self):
+        from ai_researcher.trends.brief import _fallback_markdown
+
+        stories = [{
+            "label": "Noise", "summary": "x", "category": "opinion-analysis",
+            "source_count": 1,
+        }]
+        md = _fallback_markdown(stories, [], [])
+        assert "## Ready to build" not in md

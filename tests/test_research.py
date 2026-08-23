@@ -158,6 +158,11 @@ class TestDeepResearcherFallback:
             "SELECT markdown FROM research_pages WHERE slug='adapt'"
         )
         assert adapt.startswith("# Adapt")
+        from ai_researcher.web.queries import get_research
+        rid = db.scalar("SELECT id FROM research WHERE item_id=?", (item_id,))
+        detail = get_research(db, rid)
+        assert detail["pages"][0]["slug"] == "adapt"
+        assert detail["excerpt"]
 
     def test_skips_items_below_the_gate(self, db):
         add_ready_item(db, verdict="watch", readiness=0.40)
