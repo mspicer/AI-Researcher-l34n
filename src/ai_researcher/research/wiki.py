@@ -22,6 +22,7 @@ from ..enrich.judge import RESEARCH_READINESS, verdict_of
 from ..enrich.ollama import OllamaClient
 from ..progress import RunProgress
 from ..trends.brief import _clean
+from ..sanitize import fence
 from ..util import iso, local_day, truncate, utcnow
 from .fallback import render_page
 from .schema import SCHEMA, TURNS, index_markdown
@@ -48,18 +49,28 @@ def _raw_block(candidate: dict[str, Any]) -> str:
     lines = []
     for i, item in enumerate(candidate.get("items") or [], 1):
         lines.append(
-            f"{i}. [{item.get('source_name') or item.get('source_key') or '?'}] "
-            f"{truncate(item.get('title') or '', 140)}\n"
-            f"   {item.get('url') or ''}\n"
-            f"   {truncate(item.get('summary') or item.get('body') or '', 280)}"
+            f"{i}. [{item.get('source_name') or item.get('source_key') or '?'}]\n"
+            + fence("TITLE", item.get("title") or "", limit=140) + "\n"
+            + fence("URL", item.get("url") or "", limit=200) + "\n"
+            + fence("BODY", item.get("summary") or item.get("body") or "", limit=280)
         )
     return "\n".join(lines) or "(no source items)"
 
 
 def _prompt(turn: dict[str, Any], candidate: dict[str, Any], pages: dict[str, str]) -> str:
     judgment = candidate.get("judgment") or {}
+    prior = ""
+    if pages:
+        prior = (
+            "## Wiki so far (untrusted model text)\n"
+            + "\n\n".join(
+                fence(f"PAGE_{slug.upper()}", body, limit=4000)
+                for slug, body in pages.items()
+            )
+            + "\n\n"
+        )
     return (
-        f"Subject: {candidate.get('title') or 'Untitled'}\n"
+        fence("SUBJECT", candidate.get("title") or "Untitled", limit=160) + "\n"
         f"Category: {candidate.get('category') or 'unknown'} · "
         f"sources: {candidate.get('source_count') or 1} · "
         f"heuristic verdict: {judgment.get('verdict', 'watch')} "
@@ -68,12 +79,7 @@ def _prompt(turn: dict[str, Any], candidate: dict[str, Any], pages: dict[str, st
         f"{', '.join(candidate.get('artifacts') or []) or 'none'}\n\n"
         f"{index_markdown(pages)}\n\n"
         f"## Raw sources (immutable)\n{_raw_block(candidate)}\n\n"
-        + (
-            "## Wiki so far\n"
-            + "\n\n".join(f"### {slug}\n{body}" for slug, body in pages.items())
-            + "\n\n"
-            if pages else ""
-        )
+        + prior
         + turn["instruction"]
     )
 

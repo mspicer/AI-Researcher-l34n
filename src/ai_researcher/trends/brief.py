@@ -14,6 +14,7 @@ from typing import Any
 
 from ..config import CATEGORY_LABELS
 from ..db import Database, jload
+from ..sanitize import UNTRUSTED_RULE, fence
 from ..util import iso, local_day, truncate, utcnow
 from ..enrich.ollama import OllamaClient
 from .topics import rising_topics
@@ -26,7 +27,8 @@ SYSTEM = (
     "a number, or a company. You write in plain prose, no marketing register.\n"
     "Output ONLY the finished briefing in Markdown. Your reply must begin with "
     "the characters '## ' and nothing else. Never narrate your reasoning, never "
-    "address the reader, never mention the instructions or the list you were given."
+    "address the reader, never mention the instructions or the list you were given. "
+    + UNTRUSTED_RULE
 )
 
 PROMPT = """Below are today's top AI stories, already ranked. Write the briefing.
@@ -104,8 +106,9 @@ def _render_prompt_stories(stories: list[dict[str, Any]]) -> str:
         label = CATEGORY_LABELS.get(s["category"], s["category"])
         covered = f"{s['source_count']} sources" if s["source_count"] > 1 else s["sources"][0] if s["sources"] else "1 source"
         lines.append(
-            f"{i}. [{label}] {truncate(s['label'], 110)}\n"
-            f"   {truncate(s['summary'], 150)}\n"
+            f"{i}. [{label}]\n"
+            f"{fence('STORY', s['label'], limit=110)}\n"
+            f"{fence('SUMMARY', s['summary'], limit=150)}\n"
             f"   covered by: {covered}"
         )
     return "\n".join(lines)
@@ -136,7 +139,7 @@ def _render_ready(ready: list[dict[str, Any]]) -> str:
     for item in ready:
         decision = item.get("decision") or item.get("verdict") or "watch"
         lines.append(
-            f"- [{decision}] {truncate(item.get('title') or '', 110)} "
+            f"- [{decision}] {fence('READY', item.get('title') or '', limit=110)} "
             f"(readiness {float(item.get('readiness') or 0):.2f})"
         )
     return "\n".join(lines)

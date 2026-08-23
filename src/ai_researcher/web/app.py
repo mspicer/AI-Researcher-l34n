@@ -13,9 +13,8 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from markdown_it import MarkdownIt
-
 from ..config import CATEGORY_LABELS, Settings
+from ..sanitize import href, render_markdown
 from ..db import Database
 from ..pipeline import Pipeline, sync_sources
 from ..progress import RunProgress
@@ -26,7 +25,6 @@ from . import queries as Q
 log = logging.getLogger("ai_researcher.web")
 
 WEB_DIR = Path(__file__).resolve().parent
-MD = MarkdownIt("commonmark", {"breaks": True, "linkify": True})
 
 
 class RunState:
@@ -104,7 +102,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.mount("/static", StaticFiles(directory=WEB_DIR / "static"), name="static")
 
     templates = Jinja2Templates(directory=str(WEB_DIR / "templates"))
-    templates.env.filters["markdown"] = lambda text: MD.render(text or "")
+    templates.env.filters["markdown"] = render_markdown
+    templates.env.filters["href"] = href
     templates.env.globals["CATEGORY_LABELS"] = CATEGORY_LABELS
 
     # ── optional access token ────────────────────────────────────────

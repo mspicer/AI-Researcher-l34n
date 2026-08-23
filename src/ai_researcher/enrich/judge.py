@@ -28,7 +28,8 @@ from typing import Any
 from ..config import Settings
 from ..db import Database, jdump, jload
 from ..progress import RunProgress
-from ..util import iso, truncate, utcnow
+from ..sanitize import UNTRUSTED_RULE, fence, sanitize_artifacts
+from ..util import iso, utcnow
 from .ollama import OllamaClient
 
 log = logging.getLogger("ai_researcher.judge")
@@ -101,7 +102,8 @@ _ARXIV = re.compile(r"(?:arxiv\.org/abs/|arxiv:)\s*(\d{4}\.\d{4,5})", re.IGNOREC
 SYSTEM = (
     "You judge AI discoveries for a practitioner who will implement things, "
     "not collect bookmarks. You never invent an artifact, license, or "
-    "benchmark the text does not state. Reply with JSON only."
+    "benchmark the text does not state. Reply with JSON only. "
+    + UNTRUSTED_RULE
 )
 
 SCHEMA = {
@@ -176,7 +178,7 @@ def extract_artifacts(title: str, body: str, url: str = "") -> list[str]:
     if url and any(host in url for host in ("github.com", "huggingface.co", "arxiv.org")):
         found.append(url)
     # Stable order, drop fragments that are just the item's own URL twice.
-    return list(dict.fromkeys(found))[:6]
+    return sanitize_artifacts(list(dict.fromkeys(found)))[:6]
 
 
 def judge_text(
@@ -333,7 +335,7 @@ def blend(heuristic: dict[str, Any], model: dict[str, Any]) -> dict[str, Any]:
     reasons = [str(r).strip() for r in (model.get("reasons") or []) if str(r).strip()]
     out["reasons"] = (reasons + heuristic["reasons"])[:5]
     artifacts = [str(a).strip() for a in (model.get("artifacts") or []) if str(a).strip()]
-    out["artifacts"] = list(dict.fromkeys(artifacts + heuristic["artifacts"]))[:8]
+    out["artifacts"] = sanitize_artifacts(artifacts + heuristic["artifacts"])
     return out
 
 
@@ -546,9 +548,9 @@ class Judge:
             "artifacts": jload(row["artifacts"], []),
         }
         prompt = PROMPT.format(
-            title=truncate(row["title"] or "", 250),
-            body=truncate(row["body"] or "", 900) or "(no body text)",
-            source=row["source_name"],
+            title=fence("TITLE", row["title"] or "", limit=250),
+            body=fence("BODY", row["body"] or "", limit=900),
+            source=fence("SOURCE", row["source_name"] or "", limit=80),
             tier=row["tier"] or "news",
             category=row["category"] or "unknown",
             q=heuristic["quality"],

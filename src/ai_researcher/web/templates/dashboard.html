@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "macros.html" import story_card, item_row, badge %}
+{% from "macros.html" import story_card, item_row, badge, ext_link %}
 {% block title %}AI Researcher — {{ day }}{% endblock %}
 
 {% block content %}
@@ -114,7 +114,7 @@
           {% for d in drops %}
           <div class="drop">
             <div class="n">
-              <a href="{{ d.url }}" target="_blank" rel="noopener">{{ d.title }}</a>
+              {{ ext_link(d.url, d.title) }}
               <span class="s">{{ d.source_name }} · {{ d.age }}
               {%- if d.meta.downloads %} · {{ '{:,}'.format(d.meta.downloads) }} downloads{% endif %}</span>
             </div>

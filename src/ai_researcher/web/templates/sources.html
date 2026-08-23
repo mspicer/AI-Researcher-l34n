@@ -20,7 +20,7 @@
       {% for s in sources %}
       <tr>
         <td class="name">
-          {% if s.url %}<a href="{{ s.url }}" target="_blank" rel="noopener">{{ s.name }}</a>
+          {% if s.url|href %}<a href="{{ s.url|href }}" target="_blank" rel="noopener noreferrer">{{ s.name }}</a>
           {% else %}{{ s.name }}{% endif %}
         </td>
         <td>{{ s.kind }}</td>

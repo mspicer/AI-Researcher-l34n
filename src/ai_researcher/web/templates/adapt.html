@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "macros.html" import badge, verdict_pill, meters, artifact_pills %}
+{% from "macros.html" import badge, verdict_pill, meters, artifact_pills, ext_link %}
 {% block title %}AI Researcher — Adapt{% endblock %}
 
 {% block content %}
@@ -43,7 +43,7 @@
       <span class="dotsep"></span><span>{{ b.age }}</span>
       {% if b.model %}<span class="dotsep"></span><span>{{ b.model }}</span>
       {% else %}<span class="dotsep"></span><span>template</span>{% endif %}
-      <a class="pill" href="{{ b.url }}" target="_blank" rel="noopener">source</a>
+      {{ ext_link(b.url, "source", "pill") }}
       {{ artifact_pills(b.artifacts) }}
     </div>
   </article>

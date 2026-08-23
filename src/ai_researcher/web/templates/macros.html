@@ -11,10 +11,20 @@
 {% endif %}
 {%- endmacro %}
 
+{% macro ext_link(url, text, class='') -%}
+{%- set dest = url|href -%}
+{%- if dest -%}
+<a {% if class %}class="{{ class }}" {% endif %}href="{{ dest }}" target="_blank" rel="noopener noreferrer">{{ text }}</a>
+{%- else -%}
+<span{% if class %} class="{{ class }}"{% endif %}>{{ text }}</span>
+{%- endif -%}
+{%- endmacro %}
+
 {% macro artifact_pills(artifacts) -%}
 {% for a in artifacts[:6] %}
-  {% if a.startswith('http') %}
-    <a class="pill lab" href="{{ a }}" target="_blank" rel="noopener">{{ a }}</a>
+  {% set dest = a|href %}
+  {% if dest %}
+    <a class="pill lab" href="{{ dest }}" target="_blank" rel="noopener noreferrer">{{ a }}</a>
   {% else %}
     <span class="pill">{{ a }}</span>
   {% endif %}
@@ -44,7 +54,7 @@
 <div class="item">
   <div class="imp {{ 'hi' if item.importance >= 0.7 }}">{{ '%.2f'|format(item.importance) }}</div>
   <div class="main">
-    <h4><a href="{{ item.url }}" target="_blank" rel="noopener">{{ item.title }}</a></h4>
+    <h4>{{ ext_link(item.url, item.title) }}</h4>
     {% if item.summary %}<p class="sum">{{ item.summary }}</p>{% endif %}
     {{ meters(item) }}
     <div class="meta">
@@ -56,7 +66,7 @@
       {% if item.engagement %}<span class="pill">▲ {{ item.engagement }}</span>{% endif %}
       {% if item.comments %}<span class="pill">💬 {{ item.comments }}</span>{% endif %}
       {% if item.discussion_url and item.discussion_url != item.url %}
-        <a href="{{ item.discussion_url }}" target="_blank" rel="noopener">discussion</a>
+        {{ ext_link(item.discussion_url, "discussion") }}
       {% endif %}
       {% for e in item.entities[:4] %}
         <a class="pill" href="/search?q={{ e|urlencode }}">{{ e }}</a>
@@ -75,7 +85,7 @@
 <article class="story {{ 'hot' if story.source_count >= 3 or story.research_id }}">
   <div class="story-head">
     <span class="rank">{{ rank }}</span>
-    <h3><a href="{{ story.primary.url }}" target="_blank" rel="noopener">{{ story.label }}</a></h3>
+    <h3>{{ ext_link(story.primary.url, story.label) }}</h3>
     {{ savebtn(story.primary) }}
   </div>
 
@@ -110,7 +120,7 @@
     <ul>
       {% for o in story.others %}
       <li>
-        <a href="{{ o.url }}" target="_blank" rel="noopener">{{ o.title }}</a>
+        {{ ext_link(o.url, o.title) }}
         <span class="o-src">{{ o.source_name }} · {{ o.age }}</span>
       </li>
       {% endfor %}

@@ -8,6 +8,7 @@ from typing import Any
 
 from ..config import CATEGORY_LABELS
 from ..db import Database, jload
+from ..sanitize import href, sanitize_artifacts
 from ..util import domain_of, humanize_age, local_day, parse_datetime, truncate, utcnow
 
 _VERDICT_RANK = {"adopt": 3, "research": 2, "watch": 1, "skip": 0, "": 0}
@@ -52,7 +53,7 @@ def _shape_item(row, now=None) -> dict[str, Any]:
     item = {
         "id": row["id"],
         "title": row["title"] or "(untitled)",
-        "url": row["url"],
+        "url": href(row["url"]),
         "author": row["author"],
         "summary": row["summary"],
         "why": row["why"],
@@ -67,7 +68,7 @@ def _shape_item(row, now=None) -> dict[str, Any]:
         "usefulness": round(float(row["usefulness"] or 0), 2),
         "readiness": round(float(row["readiness"] or 0), 2),
         "verdict": row["verdict"] or "",
-        "artifacts": jload(row["artifacts"], []),
+        "artifacts": sanitize_artifacts(jload(row["artifacts"], [])),
         "research_id": int(row["research_id"] or 0),
         "research_decision": row["research_decision"] or "",
         "source_key": row["source_key"],
@@ -83,7 +84,9 @@ def _shape_item(row, now=None) -> dict[str, Any]:
         "is_saved": bool(row["is_saved"]),
         "meta": meta,
         # Community items have a discussion URL distinct from the link target.
-        "discussion_url": meta.get("permalink") or meta.get("hn_url") or meta.get("tweet_url") or "",
+        "discussion_url": href(
+            meta.get("permalink") or meta.get("hn_url") or meta.get("tweet_url") or ""
+        ),
     }
     if not item["summary"]:
         body = (row["body"] or "").strip()
@@ -529,10 +532,10 @@ def list_research(
             "item_id": row["item_id"],
             "cluster_id": row["cluster_id"],
             "title": row["title"],
-            "url": row["url"],
+            "url": href(row["url"]),
             "summary": row["summary"],
             "excerpt": adapt_excerpt(row["adapt_markdown"]),
-            "artifacts": jload(row["artifacts"], []),
+            "artifacts": sanitize_artifacts(jload(row["artifacts"], [])),
             "category": row["category"] or "opinion-analysis",
             "category_label": CATEGORY_LABELS.get(row["category"], "Other"),
             "readiness": round(float(row["readiness"] or 0), 2),
@@ -593,7 +596,7 @@ def get_research(db: Database, research_id: int) -> dict[str, Any] | None:
         "item_id": row["item_id"],
         "cluster_id": row["cluster_id"],
         "title": row["title"],
-        "url": row["url"],
+        "url": href(row["url"]),
         "summary": row["summary"],
         "category": row["category"] or "opinion-analysis",
         "category_label": CATEGORY_LABELS.get(row["category"], "Other"),
@@ -607,7 +610,7 @@ def get_research(db: Database, research_id: int) -> dict[str, Any] | None:
         "feasibility": round(float(row["feasibility"] or 0), 2),
         "usefulness": round(float(row["usefulness"] or 0), 2),
         "reasons": jload(row["reasons"], []),
-        "artifacts": jload(row["artifacts"], []),
+        "artifacts": sanitize_artifacts(jload(row["artifacts"], [])),
         "age": humanize_age(parse_datetime(row["updated_at"])),
         "excerpt": adapt_excerpt(
             next((p["markdown"] for p in pages_out if p["slug"] == "adapt"), "")

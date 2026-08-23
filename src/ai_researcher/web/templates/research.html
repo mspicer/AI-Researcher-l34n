@@ -1,12 +1,12 @@
 {% extends "base.html" %}
-{% from "macros.html" import badge, verdict_pill, meters, artifact_pills %}
+{% from "macros.html" import badge, verdict_pill, meters, artifact_pills, ext_link %}
 {% block title %}{{ brief.title }} — Adapt{% endblock %}
 
 {% block content %}
 <article class="story hot">
   <div class="story-head">
     <span class="rank">PLAN</span>
-    <h3><a href="{{ brief.url }}" target="_blank" rel="noopener">{{ brief.title }}</a></h3>
+    <h3>{{ ext_link(brief.url, brief.title) }}</h3>
   </div>
   {% if brief.excerpt %}
     <p class="why">{{ brief.excerpt }}</p>
