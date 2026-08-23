@@ -309,10 +309,19 @@ def blend(heuristic: dict[str, Any], model: dict[str, Any]) -> dict[str, Any]:
         practicality=out["practicality"],
         feasibility=out["feasibility"],
     )
-    # Honour the model only when it agrees with the computed band or is one
-    # step away — otherwise a cheerful 7B will mark every paper "adopt".
-    if llm_verdict in VERDICTS and abs(VERDICTS.index(llm_verdict) - VERDICTS.index(computed)) <= 1:
-        out["verdict"] = llm_verdict if llm_verdict != "adopt" or computed in ("research", "adopt") else computed
+    # One step is measured from the *heuristic* band, not from the already-
+    # blended scores. Blending 0.99 into a skip-band prior can land in
+    # research; allowing a further step to adopt is how a cheerful 7B
+    # used to mint "adopt" on a weekly digest.
+    prior_verdict = heuristic.get("verdict") if heuristic.get("verdict") in VERDICTS else computed
+    if (
+        llm_verdict in VERDICTS
+        and abs(VERDICTS.index(llm_verdict) - VERDICTS.index(prior_verdict)) <= 1
+    ):
+        if llm_verdict == "adopt" and computed not in ("research", "adopt"):
+            out["verdict"] = computed
+        else:
+            out["verdict"] = llm_verdict
     else:
         out["verdict"] = computed
     # Re-apply the adopt brakes after blending.

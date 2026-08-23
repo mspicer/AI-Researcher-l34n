@@ -415,17 +415,32 @@ class TestBlendBrakes:
         assert jumped["verdict"] != "adopt"
 
     def test_cheerful_model_cannot_force_adopt_on_a_skip(self):
+        """Regression: 0.99 model scores blend a skip prior into the research
+        band (readiness ~0.62). Measuring the one-step rule from that blended
+        band — not the heuristic — used to honour adopt."""
         prior = judge_text(
             "weekly digest hot take", "what do you think, beginner tutorial",
             category="opinion-analysis", tier="news", importance=0.2,
         )
+        assert prior["verdict"] == "skip"
         out = blend(prior, {
             "quality": 0.99, "practicality": 0.99, "feasibility": 0.99,
             "usefulness": 0.99, "verdict": "adopt",
             "reasons": ["amazing"], "artifacts": [],
         })
         assert out["verdict"] != "adopt"
-        assert out["readiness"] < ADOPT_READINESS
+        assert out["verdict"] in ("skip", "watch", "research")
+
+    def test_model_may_promote_research_to_adopt_when_brakes_pass(self):
+        prior = heuristic(
+            quality=0.80, practicality=0.80, feasibility=0.80, usefulness=0.80,
+            verdict="research",
+        )
+        out = blend(prior, {
+            "quality": 0.90, "practicality": 0.90, "feasibility": 0.90,
+            "usefulness": 0.90, "verdict": "adopt",
+        })
+        assert out["verdict"] == "adopt"
 
     def test_adopt_brakes_reapplied_after_blend(self):
         # High readiness, but practicality stays under the brake.
