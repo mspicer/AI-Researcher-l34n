@@ -637,8 +637,10 @@ class TestStoryRollup:
         from ai_researcher.web.queries import adapt_excerpt
 
         md = "# Adapt\n## Decision\n**spike** — clone the repo and run the README.\n\n## Who\nML infra."
-        assert "spike" in adapt_excerpt(md).lower()
-        assert "clone the repo" in adapt_excerpt(md)
+        excerpt = adapt_excerpt(md)
+        assert excerpt.startswith("spike —")
+        assert "clone the repo" in excerpt
+        assert "*" not in excerpt
 
     def test_ready_filter_hides_watch_stories(self, db):
         from ai_researcher.trends.cluster import build_clusters

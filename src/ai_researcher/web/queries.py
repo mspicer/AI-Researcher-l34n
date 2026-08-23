@@ -104,10 +104,14 @@ def adapt_excerpt(markdown: str, *, limit: int = 220) -> str:
         if taking and line.startswith("#"):
             break
         if taking and line.strip():
-            collected.append(line.strip().strip("*").strip())
+            collected.append(line.strip())
             if len(collected) >= 2:
                 break
     text = re.sub(r"\s+", " ", " ".join(collected)).strip()
+    # Decision lines are written as **adopt** — …; leftover stars look like a bug
+    # on every story card and Adapt row.
+    text = re.sub(r"\*{1,3}([^*]+)\*{1,3}", r"\1", text)
+    text = text.replace("**", "").strip()
     return truncate(text, limit)
 
 
