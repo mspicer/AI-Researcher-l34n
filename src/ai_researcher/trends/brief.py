@@ -17,6 +17,7 @@ from ..db import Database, jload
 from ..sanitize import UNTRUSTED_RULE, fence
 from ..util import iso, local_day, truncate, utcnow
 from ..enrich.ollama import OllamaClient
+from ..enrich.unslop import UNSLOP_RULE, unslop_text
 from .topics import rising_topics
 
 log = logging.getLogger("ai_researcher.brief")
@@ -28,7 +29,8 @@ SYSTEM = (
     "Output ONLY the finished briefing in Markdown. Your reply must begin with "
     "the characters '## ' and nothing else. Never narrate your reasoning, never "
     "address the reader, never mention the instructions or the list you were given. "
-    + UNTRUSTED_RULE
+    + UNTRUSTED_RULE + " "
+    + UNSLOP_RULE
 )
 
 PROMPT = """Below are today's top AI stories, already ranked. Write the briefing.
@@ -208,10 +210,11 @@ async def generate_brief(
         text = await client.generate_text(
             prompt, system=SYSTEM, num_predict=850, temperature=0.35,
             timeout=max(600.0, float(client.settings.ollama_timeout)),
+            premium=True,
         )
         if text and len(text) > 120:
             markdown = _clean(text)
-            model_used = client.chat_model
+            model_used = client.model_for(premium=True)
 
     if not markdown:
         markdown = _fallback_markdown(stories, rising, ready)
@@ -256,4 +259,4 @@ def _clean(text: str) -> str:
     # Trim trailing self-commentary after the last real content line.
     text = re.sub(r"\n\s*(note|disclaimer|word count)\s*:.*$", "", text,
                   flags=re.IGNORECASE | re.DOTALL)
-    return text.strip()
+    return unslop_text(text.strip())

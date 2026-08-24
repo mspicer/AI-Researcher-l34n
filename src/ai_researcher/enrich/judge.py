@@ -560,8 +560,10 @@ class Judge:
             r=heuristic["readiness"],
         )
         async with self._gate:
+            premium = float(row["readiness"] or 0) >= self.settings.premium_readiness
             payload = await self.client.generate_json(
-                prompt, system=SYSTEM, schema=SCHEMA, num_predict=180
+                prompt, system=SYSTEM, schema=SCHEMA, num_predict=180,
+                premium=premium,
             )
         if not payload:
             return False
@@ -584,7 +586,7 @@ class Judge:
                 blended["verdict"],
                 jdump(blended["reasons"]),
                 jdump(blended["artifacts"]),
-                self.client.chat_model,
+                self.client.model_for(premium=premium),
                 iso(utcnow()),
                 row["id"],
             ),

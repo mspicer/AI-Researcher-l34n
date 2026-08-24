@@ -58,16 +58,21 @@ class FakeChat:
         self.payload = payload
         self.probe_ok = probe_ok
         self.calls = 0
+        self.json_kwargs = []
 
     async def probe(self):
         return self.probe_ok
 
     async def generate_json(self, *args, **kwargs):
         self.calls += 1
+        self.json_kwargs.append(kwargs)
         return self.payload
 
     async def generate_text(self, *args, **kwargs):
         return None
+
+    def model_for(self, *, premium=False):
+        return self.chat_model
 
     async def aclose(self):
         return None
@@ -151,6 +156,10 @@ class TestGateThresholds:
         """A run uses Settings.research_threshold, not the constant directly.
         Drift between them would silently research a different slice."""
         assert Settings().research_threshold == RESEARCH_READINESS
+
+    def test_premium_readiness_matches_the_research_gate(self):
+        """Premium models are spent on the same slice the wiki is gated on."""
+        assert Settings().premium_readiness == RESEARCH_READINESS
 
     def test_verdict_ladder(self):
         assert VERDICTS == ("skip", "watch", "research", "adopt")
@@ -542,6 +551,34 @@ class TestJudgePersistence:
         result = asyncio.run(Judge(Settings(), db, client).run(limit=1))
         assert result["llm"] == 0
         assert db.scalar("SELECT model FROM judgments") == ""
+
+    def test_high_readiness_requests_the_premium_model(self, db):
+        seed_item(
+            db, title="ready", verdict="research", readiness=0.80,
+            quality=0.8, practicality=0.8, feasibility=0.8, usefulness=0.8,
+        )
+        client = FakeChat(
+            {"quality": 0.81, "practicality": 0.81, "feasibility": 0.81,
+             "usefulness": 0.81, "verdict": "research", "reasons": ["ok"],
+             "artifacts": []},
+            probe_ok=True,
+        )
+        asyncio.run(Judge(Settings(), db, client).run(limit=1))
+        assert client.json_kwargs[0]["premium"] is True
+
+    def test_watch_band_stays_on_the_workhorse(self, db):
+        seed_item(
+            db, title="watch", verdict="watch", readiness=0.50,
+            quality=0.5, practicality=0.5, feasibility=0.5, usefulness=0.5,
+        )
+        client = FakeChat(
+            {"quality": 0.51, "practicality": 0.51, "feasibility": 0.51,
+             "usefulness": 0.51, "verdict": "watch", "reasons": ["ok"],
+             "artifacts": []},
+            probe_ok=True,
+        )
+        asyncio.run(Judge(Settings(), db, client).run(limit=1))
+        assert client.json_kwargs[0]["premium"] is False
 
 
 # ── admission to deep research ───────────────────────────────────────

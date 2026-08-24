@@ -29,6 +29,7 @@ from ..sanitize import UNTRUSTED_RULE, fence
 from ..util import iso, truncate, utcnow
 from . import heuristics as H
 from .ollama import OllamaClient
+from .unslop import UNSLOP_RULE, unslop_text
 
 log = logging.getLogger("ai_researcher.enrich")
 
@@ -36,7 +37,8 @@ SYSTEM = (
     "You are an analyst tracking AI research, products, and industry moves. "
     "You are terse and concrete, and you never claim anything the text does not "
     "say. Reply with JSON only. "
-    + UNTRUSTED_RULE
+    + UNTRUSTED_RULE + " "
+    + UNSLOP_RULE
 )
 
 SCHEMA = {
@@ -278,10 +280,10 @@ class Enricher:
         if not payload:
             return False
 
-        summary = truncate(str(payload.get("summary") or "").strip(), 320)
+        summary = unslop_text(truncate(str(payload.get("summary") or "").strip(), 320))
         if not summary:
             return False
-        why = truncate(str(payload.get("why") or "").strip(), 140)
+        why = unslop_text(truncate(str(payload.get("why") or "").strip(), 140))
 
         current = self.db.one(
             "SELECT category, entities, importance FROM enrichment WHERE item_id=?",

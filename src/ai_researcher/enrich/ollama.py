@@ -109,6 +109,10 @@ class OllamaClient:
     def installed(self) -> list[str]:
         return list(self._installed or [])
 
+    def model_for(self, *, premium: bool = False) -> str:
+        """Local Ollama has one chat model; premium is a no-op here."""
+        return self.chat_model
+
     # ── generation ───────────────────────────────────────────────────
     async def generate_json(
         self,
@@ -118,15 +122,20 @@ class OllamaClient:
         schema: dict[str, Any] | None = None,
         num_predict: int = 512,
         temperature: float = 0.1,
+        premium: bool = False,
+        model: str | None = None,
     ) -> dict[str, Any] | None:
         """Generate and parse a JSON object, or None if the model wouldn't."""
+        use_model = model or self.chat_model
+        if not use_model:
+            return None
         options = {
             "temperature": temperature,
             "num_predict": num_predict,
             "top_p": 0.9,
         }
         body: dict[str, Any] = {
-            "model": self.chat_model,
+            "model": use_model,
             "prompt": prompt,
             "stream": False,
             "options": options,
@@ -152,11 +161,15 @@ class OllamaClient:
     async def generate_text(
         self, prompt: str, *, system: str = "", num_predict: int = 900,
         temperature: float = 0.3, timeout: float | None = None,
+        premium: bool = False, model: str | None = None,
     ) -> str | None:
         """Long-form generation. `timeout` overrides the client default, which
         is sized for short per-item calls and is too tight for a full brief."""
+        use_model = model or self.chat_model
+        if not use_model:
+            return None
         body: dict[str, Any] = {
-            "model": self.chat_model,
+            "model": use_model,
             "prompt": prompt,
             "stream": False,
             "options": {"temperature": temperature, "num_predict": num_predict},
@@ -170,8 +183,6 @@ class OllamaClient:
     async def _generate(
         self, body: dict[str, Any], *, timeout: float | None = None
     ) -> str | None:
-        if not self.chat_model:
-            return None
         kwargs = {"timeout": timeout} if timeout else {}
         try:
             resp = await self._client.post(

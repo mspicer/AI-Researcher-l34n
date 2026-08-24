@@ -42,7 +42,8 @@ class Embedder:
         return self.client.embed_model
 
     async def run(self, limit: int = 2000) -> dict[str, int]:
-        if not await self.client.probe() or not self.client.embed_model:
+        await self.client.probe()
+        if not self.client.embed_model:
             if self.progress:
                 self.progress.update(
                     stage="embed",

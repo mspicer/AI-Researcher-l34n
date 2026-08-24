@@ -9,8 +9,9 @@ acquisitions, tooling, and policy — collected from ~60 sources, clustered into
 stories, ranked, and summarised by a local model. Runs entirely on your machine
 and is reachable from anywhere on your LAN.
 
-No API keys are required, nothing is sent to a third party, and the summariser
-is a local Ollama model. Every optional piece degrades to a working fallback.
+No API keys are required. Local Ollama is the default. Optional Gemini and
+OpenRouter keys, when set, take the chat load; embeddings stay local. Every
+optional piece degrades to a working fallback.
 
 ![The dashboard](docs/screenshot.png)
 ![The dashboard](docs/firehose.png)
@@ -168,8 +169,10 @@ path automatically.
 
 ## Local model notes
 
-Enrichment and the brief use Ollama. Both degrade gracefully: no model means
-heuristic classification and a templated brief, and the dashboard still works.
+Enrichment and the brief use the workhorse chat backend (Ollama by default,
+Gemini Flash or cheap OpenRouter when a key is set). Both degrade gracefully:
+no model means heuristic classification and a templated brief, and the
+dashboard still works.
 
 Two things dominate throughput on a small GPU:
 
@@ -191,6 +194,25 @@ ollama pull nomic-embed-text    # embeddings: much better clustering, 274 MB
 Pin them in `.env` (`OLLAMA_CHAT_MODEL`, `OLLAMA_EMBED_MODEL`) rather than
 relying on auto-detect, so an unrelated `ollama pull` can't silently change
 which model your dashboard uses.
+
+### Optional cloud chat (Gemini, OpenRouter)
+
+Local Ollama stays the default. Set `GEMINI_API_KEY` and/or `OPENROUTER_API_KEY`
+to shift chat off the GPU. Embeddings never leave Ollama (or TF-IDF).
+
+Routing is quality-gated so the cheap model does bulk work and the expensive
+one only sees content that already looks worth it:
+
+| Band | Used for | Default |
+|---|---|---|
+| **Workhorse** | Enrichment summaries, judgment below the readiness gate | Gemini 2.5 Flash, else cheap OpenRouter, else Ollama |
+| **Premium** | Deep-research wiki, daily brief, judgment at `AIR_PREMIUM_READINESS` (0.62) | OpenRouter Claude Sonnet, else Gemini 2.5 Pro, else the workhorse |
+
+Pin the model ids in `.env`. Generated Markdown is passed through an unslop
+filter (no em dashes, chatbot openers, or the usual AI vocabulary) so a flash
+model cannot dump filler into the Adapt tab.
+
+`ai-researcher doctor` prints which backend is the workhorse and which is premium.
 
 Check `nvidia-smi` works. If it reports a driver/library version mismatch, the
 kernel module and userspace libraries have drifted — usually after a driver

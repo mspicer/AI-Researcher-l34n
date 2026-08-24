@@ -57,6 +57,13 @@ class Settings:
     ollama_chat_model: str = ""
     ollama_embed_model: str = ""
     ollama_timeout: int = 180
+    openrouter_api_key: str = ""
+    openrouter_model: str = "google/gemini-2.5-flash"
+    openrouter_premium_model: str = "anthropic/claude-sonnet-4"
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-2.5-flash"
+    gemini_premium_model: str = "gemini-2.5-pro"
+    premium_readiness: float = 0.62
     enrich_budget: int = 40
     enrich_time_budget: int = 900
     judge_budget: int = 24
@@ -93,6 +100,13 @@ class Settings:
             ollama_chat_model=_env("OLLAMA_CHAT_MODEL"),
             ollama_embed_model=_env("OLLAMA_EMBED_MODEL"),
             ollama_timeout=_env_int("OLLAMA_TIMEOUT", 180),
+            openrouter_api_key=_env("OPENROUTER_API_KEY"),
+            openrouter_model=_env("OPENROUTER_MODEL") or "google/gemini-2.5-flash",
+            openrouter_premium_model=_env("OPENROUTER_PREMIUM_MODEL") or "anthropic/claude-sonnet-4",
+            gemini_api_key=_env("GEMINI_API_KEY") or _env("GOOGLE_API_KEY"),
+            gemini_model=_env("GEMINI_MODEL") or "gemini-2.5-flash",
+            gemini_premium_model=_env("GEMINI_PREMIUM_MODEL") or "gemini-2.5-pro",
+            premium_readiness=_env_float("AIR_PREMIUM_READINESS", 0.62),
             enrich_budget=_env_int("AIR_ENRICH_BUDGET", 40),
             enrich_time_budget=_env_int("AIR_ENRICH_TIME_BUDGET", 900),
             judge_budget=_env_int("AIR_JUDGE_BUDGET", 24),

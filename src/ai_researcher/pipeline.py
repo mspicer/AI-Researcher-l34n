@@ -21,7 +21,7 @@ from typing import Any
 from .config import Settings, Source, load_sources
 from .connectors import build_registry
 from .db import Database, jdump
-from .enrich import Embedder, Enricher, Judge, OllamaClient
+from .enrich import ChatRouter, Embedder, Enricher, Judge
 from .http import Fetcher
 from .progress import RunProgress
 from .research import DeepResearcher
@@ -273,10 +273,10 @@ class Pipeline:
 
     # ── stage 2+: analysis ───────────────────────────────────────────
     async def analyse(self, *, brief: bool = True, force_brief: bool = False) -> dict[str, Any]:
-        client = OllamaClient(self.settings)
+        client = ChatRouter(self.settings)
         try:
             self.progress.update(
-                stage="enrich", detail="Probing Ollama", current="", done=0, total=0, active=[],
+                stage="enrich", detail="Probing chat backends", current="", done=0, total=0, active=[],
             )
             await client.probe()
             enrich_stats = await Enricher(
@@ -328,6 +328,7 @@ class Pipeline:
                 "embed_model": client.embed_model,
                 "error": client.last_error,
             },
+            "chat": client.describe(),
         }
 
     # ── full run ─────────────────────────────────────────────────────

@@ -10,7 +10,7 @@ import sys
 
 from .config import Settings, load_sources
 from .db import Database
-from .enrich import Judge, OllamaClient
+from .enrich import ChatRouter, Judge
 from .pipeline import Pipeline, sync_sources
 from .research import DeepResearcher
 from .trends import backfill_topics, build_clusters, generate_brief
@@ -80,6 +80,10 @@ def cmd_run(args) -> int:
         print(f"  ollama  : {'ready' if ollama.get('available') else 'unavailable'} "
               f"chat={ollama.get('chat_model') or '-'} "
               f"embed={ollama.get('embed_model') or '-'}")
+    chat = result.get("chat") or {}
+    if chat:
+        print(f"  chat    : workhorse={chat.get('workhorse') or '-'} "
+              f"premium={chat.get('premium') or '-'}")
     for err in (ingest.get("errors") or [])[:12]:
         print(f"    ! {err}")
     if result.get("error"):
@@ -163,7 +167,7 @@ def cmd_brief(args) -> int:
     settings, db = _ctx()
 
     async def go():
-        client = OllamaClient(settings)
+        client = ChatRouter(settings)
         try:
             if args.rebuild:
                 build_clusters(db)
@@ -190,26 +194,33 @@ def cmd_doctor(args) -> int:
           f"({settings.db_path.stat().st_size // 1024 if settings.db_path.exists() else 0} KB)")
     print(f"  FTS5 search    : {'yes' if db.fts_enabled else 'no (LIKE fallback)'}")
 
-    print("\n  ── ollama ──")
+    print("\n  ── chat ──")
 
     async def probe():
-        client = OllamaClient(settings)
+        client = ChatRouter(settings)
         try:
             ok = await client.probe()
-            return ok, client.installed, client.chat_model, client.embed_model, client.last_error
+            return ok, client.describe(), client.installed, client.last_error
         finally:
             await client.aclose()
 
-    ok, installed, chat, embed, err = asyncio.run(probe())
-    print(f"  host           : {settings.ollama_host}")
-    print(f"  reachable      : {'yes' if ok else 'NO — ' + err}")
-    print(f"  installed      : {', '.join(installed) or 'none'}")
-    print(f"  chat model     : {chat or 'NONE — summaries will be extractive'}")
-    if not embed:
+    ok, chat, installed, err = asyncio.run(probe())
+    print(f"  ollama host    : {settings.ollama_host}")
+    print(f"  ollama models  : {', '.join(installed) or 'none'}")
+    print(f"  gemini         : {'configured' if settings.gemini_api_key else 'unset'} "
+          f"({settings.gemini_model} / {settings.gemini_premium_model})")
+    print(f"  openrouter     : {'configured' if settings.openrouter_api_key else 'unset'} "
+          f"({settings.openrouter_model} / {settings.openrouter_premium_model})")
+    print(f"  workhorse      : {chat.get('workhorse') or 'NONE — summaries will be extractive'}")
+    print(f"  premium        : {chat.get('premium') or 'NONE'}")
+    print(f"  ready          : {'yes' if ok else 'NO — ' + (err or chat.get('error') or 'no backend')}")
+    print(f"  premium gate   : readiness >= {settings.premium_readiness} "
+          f"(research, brief, and high-readiness judgment)")
+    if not chat.get("embed"):
         print("  embed model    : NONE — clustering falls back to TF-IDF")
         print("                   fix: ollama pull nomic-embed-text")
     else:
-        print(f"  embed model    : {embed}")
+        print(f"  embed model    : {chat.get('embed')}")
 
     print("\n  ── credentials ──")
     print(f"  GITHUB_TOKEN   : {'set' if settings.github_token else 'NOT SET — 60 req/hr limit'}")
@@ -251,7 +262,7 @@ def cmd_research(args) -> int:
     settings, db = _ctx()
 
     async def go():
-        client = OllamaClient(settings)
+        client = ChatRouter(settings)
         try:
             await client.probe()
             judged = await Judge(settings, db, client).run()

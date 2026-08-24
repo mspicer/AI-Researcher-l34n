@@ -213,7 +213,7 @@ class DeepResearcher:
             "llm": llm_pages,
             "fallback": fallback_pages,
             "candidates": len(candidates),
-            "model": self.client.chat_model if llm_ready else "",
+            "model": self.client.model_for(premium=True) if llm_ready else "",
             "model_seconds": round(elapsed, 1),
         }
 
@@ -398,12 +398,13 @@ class DeepResearcher:
                     num_predict=turn["num_predict"],
                     temperature=0.25,
                     timeout=max(240.0, float(self.client.settings.ollama_timeout)),
+                    premium=True,
                 )
                 if text and len(text) > 80:
                     markdown = _clean(text)
                     if markdown:
                         used_llm = True
-                        model_name = self.client.chat_model
+                        model_name = self.client.model_for(premium=True)
             if not markdown:
                 markdown = render_page(turn["slug"], candidate, pages)
 
