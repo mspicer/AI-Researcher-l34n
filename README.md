@@ -14,7 +14,8 @@ OpenRouter keys, when set, take the chat load; embeddings stay local. Every
 optional piece degrades to a working fallback.
 
 ![The dashboard](docs/screenshot.png)
-![The dashboard](docs/firehose.png)
+![Firehose sorted by readiness](docs/firehose.png)
+![Adapt brief](docs/adapt.png)
 ![The dashboard](docs/search.png)
 ![The dashboard](docs/saved.png)
 ![The dashboard](docs/sources.png)

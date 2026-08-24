@@ -208,3 +208,47 @@ class TestJudgePass:
         assert db.scalar("SELECT COUNT(*) FROM research") == 1
         assert db.scalar("SELECT COUNT(*) FROM research_pages") == 5
         assert db.scalar("SELECT updated_at FROM research") >= first_updated
+
+
+class TestPremiumWiki:
+    def test_every_turn_requests_premium_and_unslops(self, db):
+        add_ready_item(db)
+        settings = Settings()
+        settings.research_budget = 1
+        client = _PremiumChat()
+        result = asyncio.run(DeepResearcher(settings, db, client).run(limit=1))
+        assert result["llm"] == 1
+        assert result["model"] == "stub:premium"
+        assert client.text_kwargs
+        assert all(kw.get("premium") is True for kw in client.text_kwargs)
+        assert len(client.text_kwargs) == 5
+        adapt = db.scalar("SELECT markdown FROM research_pages WHERE slug='adapt'")
+        assert "—" not in adapt
+        assert "pivotal" not in adapt.lower()
+        assert db.scalar("SELECT model FROM research") == "stub:premium"
+
+
+class _PremiumChat:
+    available = True
+    chat_model = "stub:workhorse"
+    settings = Settings()
+
+    def __init__(self):
+        self.text_kwargs = []
+
+    async def probe(self):
+        return True
+
+    async def generate_text(self, *args, **kwargs):
+        self.text_kwargs.append(kwargs)
+        return (
+            "# Adapt\n"
+            "## Decision\n"
+            "**spike** — this is a pivotal moment for local GGUF.\n"
+            "In order to run it, clone the repo and pull Q4_K_M.\n"
+            + "Weights, license, and RTX notes for a practitioner. " * 6
+        )
+
+    def model_for(self, *, premium=False):
+        return "stub:premium" if premium else self.chat_model
+

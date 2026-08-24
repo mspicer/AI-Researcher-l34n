@@ -16,6 +16,7 @@ import pytest
 
 from ai_researcher.config import Settings
 from ai_researcher.db import Database, jdump
+from ai_researcher.enrich.analyze import Enricher, SYSTEM as ENRICH_SYSTEM
 from ai_researcher.enrich.judge import (
     ADOPT_FEASIBILITY,
     ADOPT_PRACTICALITY,
@@ -53,12 +54,15 @@ class FakeChat:
 
     available = True
     chat_model = "stub:test"
+    settings = Settings()
 
-    def __init__(self, payload=None, *, probe_ok=False):
+    def __init__(self, payload=None, *, probe_ok=False, text=None):
         self.payload = payload
         self.probe_ok = probe_ok
+        self.text = text
         self.calls = 0
         self.json_kwargs = []
+        self.text_kwargs = []
 
     async def probe(self):
         return self.probe_ok
@@ -69,10 +73,11 @@ class FakeChat:
         return self.payload
 
     async def generate_text(self, *args, **kwargs):
-        return None
+        self.text_kwargs.append(kwargs)
+        return self.text
 
     def model_for(self, *, premium=False):
-        return self.chat_model
+        return "stub:premium" if premium else self.chat_model
 
     async def aclose(self):
         return None
@@ -542,7 +547,7 @@ class TestJudgePersistence:
         low = db.one(
             "SELECT j.model FROM judgments j JOIN items i ON i.id=j.item_id WHERE i.title='low'"
         )
-        assert high["model"] == "stub:test"
+        assert high["model"] == "stub:premium"
         assert low["model"] == ""
 
     def test_failed_model_call_leaves_the_heuristic(self, db):
@@ -565,6 +570,7 @@ class TestJudgePersistence:
         )
         asyncio.run(Judge(Settings(), db, client).run(limit=1))
         assert client.json_kwargs[0]["premium"] is True
+        assert db.scalar("SELECT model FROM judgments") == "stub:premium"
 
     def test_watch_band_stays_on_the_workhorse(self, db):
         seed_item(
@@ -579,6 +585,31 @@ class TestJudgePersistence:
         )
         asyncio.run(Judge(Settings(), db, client).run(limit=1))
         assert client.json_kwargs[0]["premium"] is False
+        assert db.scalar("SELECT model FROM judgments") == "stub:test"
+
+
+class TestEnrichmentStaysOnWorkhorse:
+    def test_model_pass_does_not_request_premium(self, db):
+        seed_item(db, title="Acme 7B open weights on GitHub",
+                  body="GGUF on Hugging Face. pip install acme.")
+        client = FakeChat(
+            {"summary": "Acme released 7B GGUF weights — delve into the card.",
+             "why": "local inference got cheaper",
+             "category": "model-release",
+             "entities": ["Acme"],
+             "importance": 0.7},
+            probe_ok=True,
+        )
+        result = asyncio.run(Enricher(Settings(), db, client).run(limit=1))
+        assert result["llm"] == 1
+        assert client.json_kwargs[0].get("premium", False) is False
+        summary = db.scalar("SELECT summary FROM enrichment")
+        assert "—" not in summary
+        assert "delve" not in summary.lower()
+
+    def test_enrich_prompt_carries_unslop_rule(self):
+        from ai_researcher.enrich.unslop import UNSLOP_RULE
+        assert UNSLOP_RULE in ENRICH_SYSTEM
 
 
 # ── admission to deep research ───────────────────────────────────────

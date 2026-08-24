@@ -235,3 +235,140 @@ class TestRedact:
         url = "https://generativelanguage.googleapis.com/v1beta/models/x:generateContent?key=AIzaSecret"
         assert "AIzaSecret" not in redact_secrets(url)
         assert "Bearer REDACTED" in redact_secrets("401 Bearer sk-live-abcdef")
+
+
+class TestChatRouterPlumbing:
+    def test_no_keys_does_not_construct_cloud_backends(self):
+        router = ChatRouter(_settings(), ollama=FakeOllama())
+        assert router._gemini_backend() is None
+        assert router._openrouter_backend() is None
+
+    def test_embed_delegates_to_ollama(self):
+        ollama = FakeOllama()
+        ollama.embed_called = []
+
+        async def embed(texts):
+            ollama.embed_called.append(texts)
+            return [[0.1, 0.2]]
+
+        ollama.embed = embed
+        router = ChatRouter(_settings(), ollama=ollama)
+        vectors = asyncio.run(router.embed(["hello"]))
+        assert vectors == [[0.1, 0.2]]
+        assert ollama.embed_called == [["hello"]]
+
+    def test_aclose_closes_injected_backends(self):
+        gemini = RecBackend("gemini")
+        gemini.closed = False
+
+        async def aclose():
+            gemini.closed = True
+
+        gemini.aclose = aclose
+        router = ChatRouter(
+            _settings(gemini_api_key="g"),
+            ollama=FakeOllama(),
+            gemini=gemini,
+        )
+        asyncio.run(router.aclose())
+        assert gemini.closed is True
+
+    def test_wrapped_json_from_cloud_is_parsed(self):
+        class Prose(RecBackend):
+            async def complete(self, **kwargs):
+                self.calls.append(kwargs)
+                return "Sure, here you go:\n```json\n{\"ok\": true}\n```"
+
+        backend = Prose("gemini")
+        router = ChatRouter(
+            _settings(gemini_api_key="g"),
+            ollama=FakeOllama(),
+            gemini=backend,
+        )
+        payload = asyncio.run(router.generate_json("hi"))
+        assert payload == {"ok": True}
+
+    def test_empty_cloud_response_returns_none(self):
+        class Empty(RecBackend):
+            async def complete(self, **kwargs):
+                return None
+
+        router = ChatRouter(
+            _settings(gemini_api_key="g"),
+            ollama=FakeOllama(),
+            gemini=Empty("gemini"),
+        )
+        assert asyncio.run(router.generate_json("hi")) is None
+        assert asyncio.run(router.generate_text("hi")) is None
+
+    def test_workhorse_json_does_not_hit_premium_backend(self):
+        gemini = RecBackend("gemini")
+        openrouter = RecBackend("openrouter")
+        router = ChatRouter(
+            _settings(gemini_api_key="g", openrouter_api_key="o"),
+            ollama=FakeOllama(),
+            gemini=gemini,
+            openrouter=openrouter,
+        )
+        asyncio.run(router.generate_json("enrich me", premium=False))
+        assert gemini.calls
+        assert not openrouter.calls
+
+
+class TestSettingsEnv:
+    def test_load_reads_cloud_keys(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("AIR_DATA_DIR", str(tmp_path))
+        monkeypatch.setenv("GEMINI_API_KEY", "g-key")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
+        monkeypatch.setenv("AIR_PREMIUM_READINESS", "0.70")
+        monkeypatch.setenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
+        monkeypatch.setenv("OPENROUTER_PREMIUM_MODEL", "anthropic/claude-opus-4")
+        s = Settings.load()
+        assert s.gemini_api_key == "g-key"
+        assert s.openrouter_api_key == "or-key"
+        assert s.premium_readiness == 0.70
+        assert s.gemini_model == "gemini-2.5-flash-lite"
+        assert s.openrouter_premium_model == "anthropic/claude-opus-4"
+
+    def test_google_api_key_fills_in_for_gemini(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("AIR_DATA_DIR", str(tmp_path))
+        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+        monkeypatch.setenv("GOOGLE_API_KEY", "google-key")
+        s = Settings.load()
+        assert s.gemini_api_key == "google-key"
+
+
+class TestGeminiMultipart:
+    def test_joins_all_text_parts(self):
+        captured: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured.append(request)
+            return httpx.Response(
+                200,
+                json={"candidates": [{"content": {"parts": [
+                    {"text": "hello "},
+                    {"text": "world"},
+                ]}}]},
+            )
+
+        http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        backend = GeminiChat(Settings(), api_key="k", client=http)
+        text = asyncio.run(backend.complete(model="gemini-2.5-flash", prompt="x"))
+        asyncio.run(http.aclose())
+        assert text == "hello world"
+
+
+class TestOpenRouterEmpty:
+    def test_empty_choices_returns_none(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={"choices": []})
+
+        http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        backend = OpenAICompatChat(
+            Settings(), api_key="sk-test", base_url="https://openrouter.ai/api/v1", client=http,
+        )
+        text = asyncio.run(backend.complete(model="x", prompt="hi"))
+        asyncio.run(http.aclose())
+        assert text is None
+        assert backend.last_error == "empty OpenRouter response"
