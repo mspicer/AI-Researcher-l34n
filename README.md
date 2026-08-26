@@ -38,6 +38,42 @@ Then install it as a background service:
 
 That runs the dashboard continuously and ingests once an hour.
 
+## Docker
+
+One container serves the dashboard and runs ingest on a 60-minute timer.
+SQLite lives in a volume, so rebuilds keep your history.
+
+```bash
+cp .env.example .env          # optional: GitHub token, Gemini/OpenRouter keys
+docker compose up -d --build
+```
+
+Then open http://localhost:8899
+
+```bash
+docker compose logs -f ai-researcher
+docker compose exec ai-researcher ai-researcher doctor
+docker compose exec ai-researcher ai-researcher run     # ingest now, don't wait
+```
+
+**Ollama.** The default `OLLAMA_HOST` is `http://host.docker.internal:11434`,
+so a Compose stack on Linux/macOS/Windows talks to Ollama on the host. To run
+Ollama in Compose as well:
+
+```bash
+OLLAMA_HOST=http://ollama:11434 docker compose --profile ollama up -d --build
+```
+
+Pull models on the host (`ollama pull qwen3:4b && ollama pull nomic-embed-text`)
+or `docker compose exec ollama ollama pull qwen3:4b` if you used the profile.
+
+**No GPU.** Set `GEMINI_API_KEY` or `OPENROUTER_API_KEY` in `.env` and skip
+Ollama. Clustering falls back to TF-IDF; the dashboard still works.
+
+`AIR_AUTO_REFRESH_MIN` defaults to 60 in Compose (systemd users leave it at 0
+so the timer is the only scheduler). Set `AIR_ACCESS_TOKEN` if the port will
+be reachable beyond a trusted LAN.
+
 ## How it works
 
 ```

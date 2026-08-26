@@ -337,6 +337,14 @@ class TestSettingsEnv:
         s = Settings.load()
         assert s.gemini_api_key == "google-key"
 
+    def test_sources_path_can_be_overridden(self, monkeypatch, tmp_path):
+        catalog = tmp_path / "sources.yaml"
+        catalog.write_text("sources: []\n", encoding="utf-8")
+        monkeypatch.setenv("AIR_DATA_DIR", str(tmp_path / "data"))
+        monkeypatch.setenv("AIR_SOURCES_PATH", str(catalog))
+        s = Settings.load()
+        assert s.sources_path == catalog
+
 
 class TestGeminiMultipart:
     def test_joins_all_text_parts(self):
