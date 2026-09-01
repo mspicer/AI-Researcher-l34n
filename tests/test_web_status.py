@@ -294,6 +294,18 @@ class TestHealthz:
         assert r.status_code == 200
         assert r.json() == {"ok": True}
 
+    def test_readyz_and_health(self, client: TestClient):
+        r = client.get("/readyz")
+        assert r.status_code == 200
+        assert r.json()["ok"] is True
+        assert r.json()["database"] == "ok"
+        h = client.get("/health")
+        assert h.status_code == 200
+        body = h.json()
+        assert body["ok"] is True
+        assert "schema_version" in body
+        assert "chat_default" in body
+
     def test_healthz_skips_the_access_token(self, tmp_path, monkeypatch):
         data = tmp_path / "data"
         data.mkdir()

@@ -76,7 +76,7 @@ class FakeChat:
         self.text_kwargs.append(kwargs)
         return self.text
 
-    def model_for(self, *, premium=False):
+    def model_for(self, *, premium=False, role=""):
         return "stub:premium" if premium else self.chat_model
 
     async def aclose(self):

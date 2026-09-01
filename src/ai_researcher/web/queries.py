@@ -18,6 +18,8 @@ _DECISION_HEADING = re.compile(r"^#{1,3}\s+Decision\b", re.IGNORECASE)
 ITEM_SELECT = """
     SELECT i.id, i.title, i.url, i.author, i.published_at, i.fetched_at,
            i.engagement, i.comments, i.source_key, i.meta, i.body,
+           COALESCE(i.freshness_status, 'fresh') AS freshness_status,
+           COALESCE(i.relevant, 1) AS relevant,
            COALESCE(e.summary, '')     AS summary,
            COALESCE(e.category, '')    AS category,
            COALESCE(e.entities, '[]')  AS entities,
@@ -78,6 +80,8 @@ def _shape_item(row, now=None) -> dict[str, Any]:
         "comments": int(row["comments"] or 0),
         "published_at": row["published_at"],
         "age": humanize_age(published, now=now),
+        "freshness_status": row["freshness_status"] if "freshness_status" in row.keys() else "fresh",
+        "relevant": int(row["relevant"]) if "relevant" in row.keys() and row["relevant"] is not None else 1,
         # Google News links are redirect wrappers; show who actually
         # published the piece, not news.google.com.
         "domain": meta.get("display_domain") or domain_of(row["url"]),
@@ -190,7 +194,11 @@ def top_stories(
     rows = db.query(
         f"""
         SELECT c.id, c.label, c.summary, c.category, c.score, c.size,
-               c.source_count, c.entities, c.first_seen, c.last_seen
+               c.source_count, c.entities, c.first_seen, c.last_seen,
+               COALESCE(c.freshness_status, 'fresh') AS freshness_status,
+               COALESCE(c.stale, 0) AS stale,
+               COALESCE(c.ranking_why, '') AS ranking_why,
+               COALESCE(c.confidence, 0) AS confidence
         FROM clusters c
         WHERE {' AND '.join(where)}
         ORDER BY c.score DESC
@@ -227,6 +235,10 @@ def top_stories(
             "source_count": row["source_count"],
             "entities": jload(row["entities"], []),
             "age": humanize_age(parse_datetime(row["last_seen"]), now=now),
+            "freshness_status": row["freshness_status"] or "fresh",
+            "stale": bool(row["stale"]),
+            "ranking_why": row["ranking_why"] or "",
+            "confidence": round(float(row["confidence"] or 0), 2),
             "primary": items[0],
             "items": items,
             "others": items[1:],
@@ -392,6 +404,25 @@ def source_health(db: Database) -> list[dict[str, Any]]:
             "consecutive_failures": r["consecutive_failures"],
             "total_items": r["total_items"],
             "week_items": r["week_items"],
+            "request_count": r["request_count"] if "request_count" in r.keys() else 0,
+            "success_count": r["success_count"] if "success_count" in r.keys() else 0,
+            "success_rate": (
+                round(r["success_count"] / r["request_count"], 3)
+                if "request_count" in r.keys() and r["request_count"]
+                else None
+            ),
+            "timeout_count": r["timeout_count"] if "timeout_count" in r.keys() else 0,
+            "retry_count": r["retry_count"] if "retry_count" in r.keys() else 0,
+            "latency_ms_avg": (
+                round(r["latency_ms_sum"] / r["latency_count"], 1)
+                if "latency_count" in r.keys() and r["latency_count"]
+                else None
+            ),
+            "items_returned": r["items_returned"] if "items_returned" in r.keys() else 0,
+            "items_retained": r["items_retained"] if "items_retained" in r.keys() else 0,
+            "last_content_change": r["last_content_change"] if "last_content_change" in r.keys() else None,
+            "rate_limited_until": r["rate_limited_until"] if "rate_limited_until" in r.keys() else None,
+            "status_counts": jload(r["status_counts"], {}) if "status_counts" in r.keys() else {},
         })
     return out
 
@@ -419,6 +450,9 @@ def recent_runs(db: Database, limit: int = 20) -> list[dict[str, Any]]:
             "clusters": (stats.get("cluster") or {}).get("clusters", 0),
             "judged": (stats.get("judge") or {}).get("judged", 0),
             "research_briefs": (stats.get("research") or {}).get("researched", 0),
+            "brief_fallback": (stats.get("brief") or {}).get("fallback", False),
+            "brief_validation_ok": (stats.get("brief") or {}).get("validation_ok"),
+            "coverage": ingest.get("coverage") or "",
             "errors": (ingest.get("errors") or [])[:8],
             "error": stats.get("error", ""),
         })
@@ -464,18 +498,45 @@ def dashboard_stats(db: Database) -> dict[str, Any]:
 
 def get_brief(db: Database, day: str | None = None) -> dict[str, Any] | None:
     day = day or local_day()
-    row = db.one("SELECT day, markdown, model, created_at FROM briefs WHERE day=?", (day,))
+    row = db.one(
+        "SELECT day, markdown, model, created_at, fingerprint, prompt_version, "
+        "harness_version, validation_ok, validation_errors, fallback, provenance, "
+        "stale, invalidation_reason FROM briefs WHERE day=?",
+        (day,),
+    )
     if row is None:
-        # Fall back to the most recent brief so the panel is never empty.
-        row = db.one("SELECT day, markdown, model, created_at FROM briefs ORDER BY day DESC LIMIT 1")
+        row = db.one(
+            "SELECT day, markdown, model, created_at, fingerprint, prompt_version, "
+            "harness_version, validation_ok, validation_errors, fallback, provenance, "
+            "stale, invalidation_reason FROM briefs ORDER BY day DESC LIMIT 1"
+        )
     if row is None:
         return None
+    from ..trends.brief import current_fingerprint
+
+    current = ""
+    try:
+        current = current_fingerprint(db, day=row["day"], model=row["model"] or "")
+    except Exception:  # noqa: BLE001
+        current = row["fingerprint"] or ""
+    stale = bool(row["stale"]) or (
+        bool(row["fingerprint"]) and current and row["fingerprint"] != current
+    )
     return {
         "day": row["day"],
         "markdown": row["markdown"],
         "model": row["model"],
         "age": humanize_age(parse_datetime(row["created_at"])),
         "is_today": row["day"] == (day or local_day()),
+        "fingerprint": row["fingerprint"] or "",
+        "prompt_version": row["prompt_version"] or "",
+        "harness_version": row["harness_version"] or "",
+        "validation_ok": bool(row["validation_ok"]),
+        "validation_errors": jload(row["validation_errors"], []),
+        "fallback": bool(row["fallback"]),
+        "provenance": jload(row["provenance"], {}),
+        "stale": stale,
+        "invalidation_reason": row["invalidation_reason"] or "",
     }
 
 

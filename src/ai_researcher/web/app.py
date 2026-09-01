@@ -109,7 +109,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # ── optional access token ────────────────────────────────────────
     @app.middleware("http")
     async def guard(request: Request, call_next):
-        open_path = request.url.path == "/healthz" or request.url.path.startswith("/static")
+        open_path = (
+            request.url.path in ("/healthz", "/readyz", "/health")
+            or request.url.path.startswith("/static")
+        )
         if settings.access_token and not open_path:
             supplied = (
                 request.query_params.get("k")
@@ -126,6 +129,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             response.set_cookie(
                 "air_token", settings.access_token, max_age=90 * 86400,
                 httponly=True, samesite="lax",
+                secure=request.url.scheme == "https",
             )
             return response
         return await call_next(request)
@@ -275,6 +279,47 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """Liveness for Docker/K8s. Unauthenticated on purpose — no stats."""
         return {"ok": True}
 
+    @app.get("/readyz")
+    async def readyz():
+        """Readiness: process up and the database can be queried."""
+        try:
+            db.scalar("SELECT 1", default=0)
+            ok, msg = True, "ok"
+            try:
+                row = db.one("PRAGMA integrity_check(1)")
+                msg = row[0] if row else "ok"
+                ok = str(msg) == "ok"
+            except Exception as exc:  # noqa: BLE001
+                ok, msg = False, str(exc)[:120]
+            if not ok:
+                return JSONResponse({"ok": False, "database": msg}, status_code=503)
+            return {"ok": True, "database": "ok"}
+        except Exception as exc:  # noqa: BLE001
+            return JSONResponse({"ok": False, "error": str(exc)[:120]}, status_code=503)
+
+    @app.get("/health")
+    async def health():
+        """Detailed health: liveness, readiness, source freshness, model."""
+        from ai_researcher.db import SCHEMA_VERSION
+        stats = Q.dashboard_stats(db)
+        last_ok = db.one(
+            "SELECT last_fetch_at FROM sources WHERE enabled=1 AND last_status IN ('ok','not-modified') "
+            "ORDER BY last_fetch_at DESC LIMIT 1"
+        )
+        return {
+            "ok": True,
+            "live": True,
+            "ready": True,
+            "database": "ok",
+            "schema_version": SCHEMA_VERSION,
+            "items_total": stats["items_total"],
+            "sources_ok": stats["sources_ok"],
+            "sources_failing": stats["sources_failing"],
+            "last_successful_fetch": last_ok["last_fetch_at"] if last_ok else None,
+            "last_run_status": stats["last_run_status"],
+            "chat_default": settings.ollama_chat_model or settings.ollama_default_chat_model,
+        }
+
     @app.get("/api/status")
     async def api_status():
         return {"stats": Q.dashboard_stats(db), "run": state.status}
@@ -321,6 +366,70 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "INSERT INTO saved (item_id, saved_at) VALUES (?,?)", (item_id, iso(utcnow()))
         )
         return {"saved": True}
+
+    @app.post("/api/brief/regenerate")
+    async def api_brief_regenerate():
+        from ..enrich.chat import ChatRouter
+        from ..trends.brief import generate_brief
+
+        if state.running:
+            return JSONResponse({"status": "busy"}, status_code=409)
+
+        async def go():
+            client = ChatRouter(settings)
+            try:
+                return await generate_brief(db, client, force=True)
+            finally:
+                await client.aclose()
+
+        result = await go()
+        return result
+
+    @app.post("/api/feedback/{item_id}")
+    async def api_feedback(item_id: int, kind: str = Query("useful"), note: str = Query("")):
+        allowed = {"irrelevant", "misleading", "duplicate", "useful", "stale"}
+        if kind not in allowed:
+            raise HTTPException(400, "unknown feedback kind")
+        exists = db.one("SELECT id FROM items WHERE id=?", (item_id,))
+        if not exists:
+            raise HTTPException(404, "no such item")
+        db.execute(
+            "INSERT INTO feedback (item_id, kind, note, created_at) VALUES (?,?,?,?)",
+            (item_id, kind, note[:240], iso(utcnow())),
+        )
+        if kind == "irrelevant":
+            db.execute(
+                "UPDATE items SET relevant=0, relevance_reason=?, relevance_score=0 WHERE id=?",
+                ("user marked irrelevant", item_id),
+            )
+        elif kind == "stale":
+            db.execute(
+                "UPDATE items SET freshness_status='stale' WHERE id=?",
+                (item_id,),
+            )
+        return {"ok": True, "kind": kind}
+
+    @app.post("/api/sources/{key}/mute")
+    async def api_mute_source(key: str, muted: int = Query(1)):
+        src = db.one("SELECT key FROM sources WHERE key=?", (key,))
+        if not src:
+            raise HTTPException(404, "no such source")
+        existing = db.one(
+            "SELECT id FROM source_controls WHERE source_key=? AND category=''", (key,)
+        )
+        now = iso(utcnow())
+        if existing:
+            db.execute(
+                "UPDATE source_controls SET muted=?, updated_at=? WHERE id=?",
+                (1 if muted else 0, now, existing["id"]),
+            )
+        else:
+            db.execute(
+                "INSERT INTO source_controls (source_key, category, muted, paused, updated_at) "
+                "VALUES (?,?,?,?,?)",
+                (key, "", 1 if muted else 0, 0, now),
+            )
+        return {"ok": True, "key": key, "muted": bool(muted)}
 
     @app.post("/refresh")
     async def refresh_form(request: Request):
