@@ -109,7 +109,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # ── optional access token ────────────────────────────────────────
     @app.middleware("http")
     async def guard(request: Request, call_next):
-        if settings.access_token and not request.url.path.startswith("/static"):
+        open_path = request.url.path == "/healthz" or request.url.path.startswith("/static")
+        if settings.access_token and not open_path:
             supplied = (
                 request.query_params.get("k")
                 or request.headers.get("X-AIR-Token")
@@ -269,6 +270,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     # ── json api ─────────────────────────────────────────────────────
+    @app.get("/healthz")
+    async def healthz():
+        """Liveness for Docker/K8s. Unauthenticated on purpose — no stats."""
+        return {"ok": True}
+
     @app.get("/api/status")
     async def api_status():
         return {"stats": Q.dashboard_stats(db), "run": state.status}

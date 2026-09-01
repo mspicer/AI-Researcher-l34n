@@ -123,6 +123,10 @@ class Settings:
             reddit_client_secret=_env("REDDIT_CLIENT_SECRET"),
             github_token=_env("GITHUB_TOKEN"),
         )
+        if _env("AIR_SOURCES_PATH"):
+            s.sources_path = Path(_env("AIR_SOURCES_PATH")).expanduser()
+            if not s.sources_path.is_absolute():
+                s.sources_path = (PROJECT_ROOT / s.sources_path).resolve()
         if not s.data_dir.is_absolute():
             s.data_dir = (PROJECT_ROOT / s.data_dir).resolve()
         s.data_dir.mkdir(parents=True, exist_ok=True)

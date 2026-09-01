@@ -286,3 +286,26 @@ class TestRefreshEndpoint:
         # the in-process lock briefly; if it already finished, started is fine.
         r2 = client.post("/api/refresh")
         assert r2.status_code in (200, 409)
+
+
+class TestHealthz:
+    def test_healthz_is_ok(self, client: TestClient):
+        r = client.get("/healthz")
+        assert r.status_code == 200
+        assert r.json() == {"ok": True}
+
+    def test_healthz_skips_the_access_token(self, tmp_path, monkeypatch):
+        data = tmp_path / "data"
+        data.mkdir()
+        monkeypatch.setenv("AIR_DATA_DIR", str(data))
+        monkeypatch.setenv("AIR_AUTO_REFRESH_MIN", "0")
+        settings = Settings(
+            data_dir=data,
+            access_token="secret-token",
+            sources_path=Path(__file__).resolve().parents[1] / "config" / "sources.yaml",
+        )
+        app = create_app(settings)
+        with TestClient(app) as c:
+            assert c.get("/healthz").status_code == 200
+            assert c.get("/").status_code == 401
+            assert c.get("/api/status").status_code == 401

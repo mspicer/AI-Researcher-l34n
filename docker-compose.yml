@@ -1,0 +1,72 @@
+# AI Researcher — dashboard + hourly ingest.
+#
+#   cp .env.example .env    # optional keys
+#   docker compose up -d --build
+#
+# Host Ollama is the default (host.docker.internal:11434).
+# Bundled Ollama:  OLLAMA_HOST=http://ollama:11434 docker compose --profile ollama up -d
+# Cloud-only:      set GEMINI_API_KEY or OPENROUTER_API_KEY; skip Ollama.
+
+name: ai-researcher
+
+services:
+  ai-researcher:
+    build: .
+    image: ai-researcher:local
+    ports:
+      - "${AIR_PORT:-8899}:8899"
+    environment:
+      AIR_HOST: "0.0.0.0"
+      AIR_PORT: "8899"
+      AIR_DATA_DIR: /data
+      AIR_AUTO_REFRESH_MIN: ${AIR_AUTO_REFRESH_MIN:-60}
+      AIR_ACCESS_TOKEN: ${AIR_ACCESS_TOKEN:-}
+      OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
+      OLLAMA_CHAT_MODEL: ${OLLAMA_CHAT_MODEL:-}
+      OLLAMA_EMBED_MODEL: ${OLLAMA_EMBED_MODEL:-}
+      OLLAMA_TIMEOUT: ${OLLAMA_TIMEOUT:-180}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+      GEMINI_PREMIUM_MODEL: ${GEMINI_PREMIUM_MODEL:-gemini-2.5-pro}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-google/gemini-2.5-flash}
+      OPENROUTER_PREMIUM_MODEL: ${OPENROUTER_PREMIUM_MODEL:-anthropic/claude-sonnet-4}
+      AIR_PREMIUM_READINESS: ${AIR_PREMIUM_READINESS:-0.62}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      X_BEARER_TOKEN: ${X_BEARER_TOKEN:-}
+      REDDIT_CLIENT_ID: ${REDDIT_CLIENT_ID:-}
+      REDDIT_CLIENT_SECRET: ${REDDIT_CLIENT_SECRET:-}
+    volumes:
+      - air-data:/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 45s
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:%s/healthz' % os.environ.get('AIR_PORT', '8899'), timeout=4)",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  ollama:
+    profiles: ["ollama"]
+    image: ollama/ollama:latest
+    volumes:
+      - ollama-models:/root/.ollama
+    ports:
+      - "11434:11434"
+    restart: unless-stopped
+    # GPU: drop a docker-compose.override.yml with the NVIDIA device reservation.
+    # CPU works; it is slow. Prefer host Ollama on a machine that already has a GPU.
+
+volumes:
+  air-data:
+  ollama-models:
