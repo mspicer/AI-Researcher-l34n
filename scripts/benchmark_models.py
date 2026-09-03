@@ -55,6 +55,8 @@ from ai_researcher.trends.brief import (  # noqa: E402
     _render_ready,
 )
 from ai_researcher.sanitize import fence  # noqa: E402
+from ai_researcher.research.schema import SCHEMA, TURNS, adapt_complete  # noqa: E402
+from ai_researcher.research.wiki import parse_scores  # noqa: E402
 
 # ── Model catalog (APE-711) ────────────────────────────────────────────────────
 
@@ -232,25 +234,42 @@ class ProviderClient:
     # Sync entry-point invoked by run_corpus's generate closure.
     def generate(self, case: dict[str, Any], *, layer: str = "schema",
                  retry: bool = False) -> str:
-        prompt = _case_to_prompt(case)
+        return self.generate_prompt(
+            _case_to_prompt(case), system=SYSTEM, num_predict=900,
+            temperature=0.35, tag=f"brief/{case.get('id')}",
+        )
+
+    def generate_prompt(
+        self, prompt: str, *, system: str = SYSTEM, num_predict: int = 900,
+        temperature: float = 0.35, timeout: float | None = None,
+        tag: str = "",
+    ) -> str:
+        """Synchronous wrapper around the backend call for one arbitrary prompt."""
         started = time.monotonic()
+        # Larger local models need much more than the settings default (180s).
+        # Bump to 600s for the enrichment turns and any big-model brief run.
+        or_timeout = timeout if timeout is not None else 120.0
+        ollama_timeout = timeout if timeout is not None else 600.0
         try:
             if self.spec.provider == "openrouter":
                 out = self._loop.run_until_complete(
-                    self._or_call(prompt, timeout=90.0)
+                    self._or_call(prompt, system=system,
+                                  max_tokens=num_predict,
+                                  temperature=temperature,
+                                  timeout=or_timeout)
                 )
             else:
                 out = self._loop.run_until_complete(
                     self._backend.generate_text(
-                        prompt, system=SYSTEM, num_predict=900,
-                        temperature=0.35, timeout=180.0,
+                        prompt, system=system, num_predict=num_predict,
+                        temperature=temperature, timeout=ollama_timeout,
                     )
                 )
         except Exception as exc:  # noqa: BLE001
             self.stats.failures += 1
             self.stats.wall_s += time.monotonic() - started
             self.stats.calls += 1
-            print(f"    ! call failed ({self.spec.slug}, case={case.get('id')}): {exc}",
+            print(f"    ! call failed ({self.spec.slug}, {tag}): {exc}",
                   file=sys.stderr)
             return ""
         self.stats.wall_s += time.monotonic() - started
@@ -260,7 +279,9 @@ class ProviderClient:
             return ""
         return out
 
-    async def _or_call(self, prompt: str, *, timeout: float) -> str:
+    async def _or_call(self, prompt: str, *, system: str = SYSTEM,
+                       max_tokens: int = 900, temperature: float = 0.35,
+                       timeout: float) -> str:
         # OpenAICompatChat.complete returns str|None and doesn't surface usage.
         # We reimplement the POST here so we can capture token usage & retry
         # with a per-provider prompt shape.
@@ -268,11 +289,11 @@ class ProviderClient:
         body = {
             "model": self.spec.model,
             "messages": [
-                {"role": "system", "content": SYSTEM},
+                {"role": "system", "content": system},
                 {"role": "user", "content": prompt},
             ],
-            "temperature": 0.35,
-            "max_tokens": 900,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
         }
         headers = {
             "Authorization": f"Bearer {os.environ['OPENROUTER_API_KEY']}",
@@ -294,6 +315,177 @@ class ProviderClient:
         if not choices:
             return ""
         return (choices[0].get("message") or {}).get("content") or ""
+
+
+# ── Enrichment pass (full-fidelity Depth + Actionability) ─────────────────────
+
+TURN_BY_SLUG = {t["slug"]: t for t in TURNS}
+
+
+def _research_tier_cases(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return cases whose expected verdict includes research/adopt/spike.
+
+    Per rubric: "each corpus item that reaches the research tier". We proxy
+    that with the expected verdict — the cases the model *should* enrich.
+    """
+    out = []
+    for c in cases:
+        exp = c.get("expected") or {}
+        verdicts = exp.get("verdict_in") or []
+        if any(v in ("adopt", "research", "spike") for v in verdicts) \
+                or exp.get("has_artifact"):
+            out.append(c)
+    return out
+
+
+def _candidate_from_case(case: dict[str, Any]) -> dict[str, Any]:
+    """Adapt a corpus case to the wiki._prompt candidate shape."""
+    items_raw = case.get("items") or ([case["item"]] if case.get("item") else [])
+    items = []
+    for it in items_raw:
+        items.append({
+            "source_name": it.get("source") or it.get("kind") or "rss",
+            "source_key": it.get("source") or "",
+            "title": it.get("title") or "",
+            "url": it.get("url") or "",
+            "summary": (it.get("body") or "")[:400],
+            "body": it.get("body") or "",
+        })
+    lead = items_raw[0] if items_raw else {}
+    return {
+        "title": lead.get("title") or case.get("id") or "Untitled",
+        "category": (case.get("expected") or {}).get("category")
+                    or lead.get("category") or "opinion-analysis",
+        "source_count": len(items) or 1,
+        "artifacts": [],
+        "judgment": {"verdict": "watch", "readiness": 0.5},
+        "items": items,
+    }
+
+
+def _enrichment_prompt(turn_slug: str, case: dict[str, Any],
+                        pages: dict[str, str]) -> str:
+    """Compose an enrichment-turn prompt using L34N's own wiki._prompt shape."""
+    # We inline a minimal port of wiki._prompt so we don't depend on Database.
+    turn = TURN_BY_SLUG[turn_slug]
+    candidate = _candidate_from_case(case)
+    prior = ""
+    if pages:
+        prior = (
+            "## Wiki so far (untrusted model text)\n"
+            + "\n\n".join(
+                fence(f"PAGE_{slug.upper()}", body, limit=4000)
+                for slug, body in pages.items()
+            )
+            + "\n\n"
+        )
+    return (
+        fence("SUBJECT", candidate["title"], limit=160) + "\n"
+        f"Category: {candidate['category']} · "
+        f"sources: {candidate['source_count']} · "
+        f"heuristic verdict: watch (readiness 0.50)\n"
+        f"Artifacts already extracted: none\n\n"
+        f"## Raw sources (immutable)\n"
+        + "\n".join(
+            f"{i}. [{it['source_name']}]\n"
+            + fence("TITLE", it['title'], limit=140) + "\n"
+            + fence("URL", it['url'], limit=200) + "\n"
+            + fence("BODY", it['summary'], limit=280)
+            for i, it in enumerate(candidate["items"], 1)
+        )
+        + "\n\n"
+        + prior
+        + turn["instruction"]
+    )
+
+
+@dataclass
+class EnrichmentCaseResult:
+    case_id: str
+    quality: float | None = None       # from Critique scores line
+    usefulness: float | None = None
+    practicality: float | None = None
+    feasibility: float | None = None
+    critique_ok: bool = False           # scores line parsed
+    adapt_complete: bool = False
+    adapt_word_count: int = 0
+    error: str = ""
+
+
+def run_enrichment_pass(client: "ProviderClient",
+                        cases: list[dict[str, Any]]) -> list[EnrichmentCaseResult]:
+    """Run Critique + Adapt turns per case using SCHEMA as system prompt."""
+    results: list[EnrichmentCaseResult] = []
+    for case in cases:
+        r = EnrichmentCaseResult(case_id=case["id"])
+        pages: dict[str, str] = {}
+        # Turn 1: Critique — extracts Q/P/F/U scores
+        critique_prompt = _enrichment_prompt("critique", case, pages)
+        critique_md = client.generate_prompt(
+            critique_prompt, system=SCHEMA,
+            num_predict=TURN_BY_SLUG["critique"]["num_predict"],
+            temperature=0.2, tag=f"critique/{case['id']}",
+        )
+        if not critique_md:
+            r.error = "critique generation failed"
+            results.append(r)
+            continue
+        scores = parse_scores(critique_md)
+        if scores:
+            r.quality = scores["quality"]
+            r.usefulness = scores["usefulness"]
+            r.practicality = scores["practicality"]
+            r.feasibility = scores["feasibility"]
+            r.critique_ok = True
+        pages["critique"] = critique_md
+
+        # Turn 2: Adapt — check adapt_complete
+        adapt_prompt = _enrichment_prompt("adapt", case, pages)
+        adapt_md = client.generate_prompt(
+            adapt_prompt, system=SCHEMA,
+            num_predict=TURN_BY_SLUG["adapt"]["num_predict"],
+            temperature=0.2, tag=f"adapt/{case['id']}",
+        )
+        if adapt_md:
+            r.adapt_complete = adapt_complete(adapt_md)
+            r.adapt_word_count = len(adapt_md.split())
+        else:
+            r.error = (r.error + "; " if r.error else "") + "adapt generation failed"
+        results.append(r)
+    return results
+
+
+def summarise_enrichment(results: list[EnrichmentCaseResult]) -> dict[str, Any]:
+    if not results:
+        return {
+            "cases": 0, "avg_quality": None, "avg_usefulness": None,
+            "adapt_complete_rate": 0.0, "critique_parse_rate": 0.0,
+        }
+    critique_scored = [r for r in results if r.critique_ok]
+    parse_rate = len(critique_scored) / len(results)
+    return {
+        "cases": len(results),
+        "avg_quality": (
+            round(statistics.mean(r.quality for r in critique_scored), 4)
+            if critique_scored else None
+        ),
+        "avg_usefulness": (
+            round(statistics.mean(r.usefulness for r in critique_scored), 4)
+            if critique_scored else None
+        ),
+        "avg_practicality": (
+            round(statistics.mean(r.practicality for r in critique_scored), 4)
+            if critique_scored else None
+        ),
+        "avg_feasibility": (
+            round(statistics.mean(r.feasibility for r in critique_scored), 4)
+            if critique_scored else None
+        ),
+        "adapt_complete_rate": round(
+            sum(1 for r in results if r.adapt_complete) / len(results), 4
+        ),
+        "critique_parse_rate": round(parse_rate, 4),
+    }
 
 
 # ── Rubric composite scoring (APE-710) ─────────────────────────────────────────
@@ -327,8 +519,14 @@ def rubric_score(
     wall_s: float,
     cost_usd: float,
     baseline_qpd: float | None = None,
+    enrichment: dict[str, Any] | None = None,
 ) -> RubricScores:
-    """Compute the APE-710 v1.0 composite from a `summarise()` metrics dict."""
+    """Compute the APE-710 v1.0 composite from a `summarise()` metrics dict.
+
+    When ``enrichment`` is provided (from ``summarise_enrichment``), full-fidelity
+    Depth and Actionability are computed per rubric §3 and §4. Otherwise falls
+    back to the proxy scoring documented in the report.
+    """
     rs = RubricScores()
 
     # 1. Relevance & Recall
@@ -348,20 +546,35 @@ def rubric_score(
         + (1 - injection) * 0.10
     ) * 100
 
-    # 3. Depth — no judge scores available here (harness doesn't call judge
-    # for arbitrary output), so proxy with format_compliance + citation
-    # + (1 - prompt_echo) and note limitation.
+    # 3. Depth — full-fidelity when enrichment scores are present, else proxy.
     format_ok = metrics.get("format_compliance", 0.0)
     prompt_echo = metrics.get("prompt_echo_rate", 0.0)
-    rs.depth = (
-        format_ok * 0.55
-        + citation * 0.30
-        + (1 - prompt_echo) * 0.15
-    ) * 100
+    if enrichment and enrichment.get("cases", 0) > 0 \
+            and enrichment.get("avg_quality") is not None:
+        q = enrichment["avg_quality"]
+        u = enrichment["avg_usefulness"] or 0.0
+        adapt_rate = enrichment.get("adapt_complete_rate", 0.0)
+        rs.depth = (
+            q * 0.40
+            + u * 0.35
+            + adapt_rate * 0.15
+            + (1 - prompt_echo) * 0.10
+        ) * 100
+    else:
+        # Proxy: format-compliance + citation + non-echo
+        rs.depth = (
+            format_ok * 0.55
+            + citation * 0.30
+            + (1 - prompt_echo) * 0.15
+        ) * 100
 
-    # 4. Actionability — readiness_agreement + adapt (adapt not measured here)
+    # 4. Actionability — readiness_agreement + adapt_complete_rate (full-fidelity)
     readiness = metrics.get("readiness_agreement", 0.0)
-    rs.actionability = readiness * 100  # adapt component not measurable in this corpus
+    if enrichment and enrichment.get("cases", 0) > 0:
+        adapt_rate = enrichment.get("adapt_complete_rate", 0.0)
+        rs.actionability = (readiness * 0.60 + adapt_rate * 0.40) * 100
+    else:
+        rs.actionability = readiness * 100  # proxy
 
     # 5. Cost — normalized against `baseline_qpd` (best qpd across sweep)
     qpd = 0.0 if cost_usd <= 0 else (rs.accuracy + rs.relevance) / cost_usd
@@ -417,15 +630,24 @@ def _estimate_cost(spec: ModelSpec, stats: CallStats) -> float:
 
 def run_one_model(spec: ModelSpec, settings: Settings, *,
                   case_ids: list[str] | None = None,
-                  layers: tuple[str, ...] = ("schema", "fallback")) -> dict[str, Any]:
-    print(f"→ {spec.slug} ({spec.provider} / {spec.model}, {spec.tier})")
+                  layers: tuple[str, ...] = ("schema", "fallback"),
+                  full_fidelity: bool = True) -> dict[str, Any]:
+    print(f"→ {spec.slug} ({spec.provider} / {spec.model}, {spec.tier})"
+          f"{' [full-fidelity]' if full_fidelity else ''}")
     client = ProviderClient(spec, settings)
     started = time.monotonic()
+    enrichment_results: list[EnrichmentCaseResult] = []
     try:
         result = run_corpus(
             generate=lambda case, layer=None, **kw: client.generate(case, layer=layer or "schema"),
             layers=layers, case_ids=case_ids,
         )
+        if full_fidelity:
+            cases = [c for c in CASES if not case_ids or c["id"] in set(case_ids)]
+            research_cases = _research_tier_cases(cases)
+            if research_cases:
+                print(f"  enrichment pass: {len(research_cases)} research-tier case(s)")
+                enrichment_results = run_enrichment_pass(client, research_cases)
     finally:
         wall_s = time.monotonic() - started
         try:
@@ -440,7 +662,10 @@ def run_one_model(spec: ModelSpec, settings: Settings, *,
     primary_layer = result["layers"].get("schema") or next(iter(result["layers"].values()))
     metrics = primary_layer["metrics"]
 
-    rs = rubric_score(metrics, wall_s=wall_s, cost_usd=cost_usd)
+    enrichment_summary = summarise_enrichment(enrichment_results) if enrichment_results else None
+
+    rs = rubric_score(metrics, wall_s=wall_s, cost_usd=cost_usd,
+                      enrichment=enrichment_summary)
 
     doc = {
         "model_slug": spec.slug,
@@ -448,6 +673,7 @@ def run_one_model(spec: ModelSpec, settings: Settings, *,
         "provider": spec.provider,
         "tier": spec.tier,
         "backend": "local_ollama" if spec.provider == "ollama" else "openrouter",
+        "full_fidelity": full_fidelity and bool(enrichment_results),
         "corpus_version": result["corpus_version"],
         "prompt_version": result["prompt_version"],
         "harness_version": result["harness_version"],
@@ -461,6 +687,8 @@ def run_one_model(spec: ModelSpec, settings: Settings, *,
             layer: entry["metrics"] for layer, entry in result["layers"].items()
         },
         "case_details": primary_layer["cases"],
+        "enrichment": enrichment_summary,
+        "enrichment_details": [asdict(r) for r in enrichment_results] if enrichment_results else [],
         "rubric": asdict(rs),
         "notes": spec.notes,
     }
@@ -468,12 +696,14 @@ def run_one_model(spec: ModelSpec, settings: Settings, *,
 
 
 def sweep(specs: list[ModelSpec], settings: Settings, out_dir: Path,
-          *, case_ids: list[str] | None = None) -> dict[str, Any]:
+          *, case_ids: list[str] | None = None,
+          full_fidelity: bool = True) -> dict[str, Any]:
     out_dir.mkdir(parents=True, exist_ok=True)
     summary_entries: list[dict[str, Any]] = []
     for spec in specs:
         try:
-            doc = run_one_model(spec, settings, case_ids=case_ids)
+            doc = run_one_model(spec, settings, case_ids=case_ids,
+                                 full_fidelity=full_fidelity)
         except Exception as exc:  # noqa: BLE001
             print(f"  !! {spec.slug} failed: {exc}", file=sys.stderr)
             doc = {
@@ -534,6 +764,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="comma-sep list of case ids to run (default: all)")
     ap.add_argument("--out", default="/home/ebg/l34n/data/benchmark-results",
                     help="output directory")
+    ap.add_argument("--brief-only", action="store_true",
+                    help="skip the enrichment pass (Critique + Adapt turns); "
+                         "Depth/Actionability fall back to proxy scoring")
     ap.add_argument("--list", action="store_true", help="list matrix and exit")
     args = ap.parse_args(argv)
 
@@ -563,8 +796,10 @@ def main(argv: list[str] | None = None) -> int:
     case_ids = [c.strip() for c in args.cases.split(",")] if args.cases else None
 
     print(f"Sweeping {len(specs)} model(s), corpus v{CORPUS_VERSION}, "
-          f"cases={len(case_ids) if case_ids else len(CASES)}")
-    sweep(specs, settings, Path(args.out), case_ids=case_ids)
+          f"cases={len(case_ids) if case_ids else len(CASES)}, "
+          f"mode={'brief-only' if args.brief_only else 'full-fidelity'}")
+    sweep(specs, settings, Path(args.out), case_ids=case_ids,
+          full_fidelity=not args.brief_only)
     return 0
 
 
