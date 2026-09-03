@@ -126,7 +126,13 @@ class TestBriefUsesPremium:
             "This is a pivotal moment — Acme shipped 7B GGUF weights today. "
             "In order to run them, pull Q4_K_M.\n\n"
             "## Also today\n"
-            "- **Local default** Acme 7B fits a 12GB card.\n"
+            "- **Weights** — Acme 7B open weights landed on Hugging Face.\n"
+            "- **Quant** — Q4_K_M is the practical local default.\n"
+            "- **Card** — It fits a 12GB GPU without offload.\n"
+            "- **License** — Check the model card before shipping.\n\n"
+            "## Worth a closer look\n"
+            "- **Card** — Confirm the GGUF quant and license.\n"
+            "- **Serve** — A local llama.cpp spike is the first experiment.\n"
         )
         assert len(sloppy) > 120
         client = _BriefChat(sloppy)
@@ -156,5 +162,5 @@ class _BriefChat:
         self.text_kwargs.append(kwargs)
         return self.text
 
-    def model_for(self, *, premium=False):
+    def model_for(self, *, premium=False, role=""):
         return "stub:premium" if premium else self.chat_model

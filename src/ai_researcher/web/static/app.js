@@ -37,6 +37,41 @@
       .finally(function () { btn.disabled = false; });
   });
 
+  document.addEventListener("click", function (ev) {
+    var btn = ev.target.closest(".fb");
+    if (!btn) return;
+    ev.preventDefault();
+    var id = btn.dataset.id;
+    var kind = btn.dataset.kind;
+    fetch("/api/feedback/" + id + "?kind=" + encodeURIComponent(kind), { method: "POST" })
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      })
+      .then(function () { toast("Noted: " + kind); })
+      .catch(function () { toast("Could not record feedback"); });
+  });
+
+  var regen = document.getElementById("regen-brief");
+  if (regen) {
+    regen.addEventListener("click", function (ev) {
+      ev.preventDefault();
+      regen.disabled = true;
+      regen.textContent = "Regenerating…";
+      fetch("/api/brief/regenerate", { method: "POST" })
+        .then(function (r) { return r.json(); })
+        .then(function () {
+          toast("Brief regenerated — reloading");
+          setTimeout(function () { location.reload(); }, 700);
+        })
+        .catch(function () {
+          toast("Could not regenerate the brief");
+          regen.disabled = false;
+          regen.textContent = "Regenerate brief";
+        });
+    });
+  }
+
   /* ── verbose ingest status ─────────────────────────────────── */
   var VERBOSE_KEY = "air.verboseIngest";
   var verboseToggle = document.getElementById("verbose-ingest");

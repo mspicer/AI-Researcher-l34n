@@ -47,7 +47,7 @@ class FakeOllama:
     async def aclose(self):
         return None
 
-    def model_for(self, *, premium=False):
+    def model_for(self, *, premium=False, role=""):
         return self.chat_model
 
 
@@ -329,6 +329,17 @@ class TestSettingsEnv:
         assert s.premium_readiness == 0.70
         assert s.gemini_model == "gemini-2.5-flash-lite"
         assert s.openrouter_premium_model == "anthropic/claude-opus-4"
+
+    def test_role_models_and_default_chat(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("AIR_DATA_DIR", str(tmp_path))
+        monkeypatch.setenv("OLLAMA_DEFAULT_CHAT_MODEL", "gemma3:4b")
+        monkeypatch.setenv("AIR_ENRICH_MODEL", "qwen3:4b")
+        monkeypatch.setenv("AIR_BRIEF_MODEL", "qwen3:8b")
+        s = Settings.load()
+        assert s.ollama_default_chat_model == "gemma3:4b"
+        router = ChatRouter(s, ollama=FakeOllama())
+        assert router.model_for(role="enrich") == "qwen3:4b"
+        assert router.model_for(premium=True, role="brief") == "qwen3:8b"
 
     def test_google_api_key_fills_in_for_gemini(self, monkeypatch, tmp_path):
         monkeypatch.setenv("AIR_DATA_DIR", str(tmp_path))

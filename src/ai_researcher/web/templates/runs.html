@@ -18,7 +18,7 @@
       <tr>
         <td class="num">{{ r.id }}</td>
         <td title="{{ r.started_at }}">{{ r.started }}</td>
-        <td><span class="st {{ r.status if r.status in ('ok', 'running') else 'error' }}">{{ r.status }}</span></td>
+        <td><span class="st {{ r.status if r.status in ('ok', 'running', 'partial', 'busy') else 'error' }}">{{ r.status }}</span></td>
         <td class="num">{{ r.elapsed_s or '—' }}</td>
         <td class="num">{{ r.new_items }}</td>
         <td class="num">{{ r.enriched }}</td>

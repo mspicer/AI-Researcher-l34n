@@ -1,7 +1,11 @@
 # syntax=docker/dockerfile:1
-# Dashboard + hourly ingest in one process. SQLite lives in /data.
+# Dashboard image. SQLite lives in /data. Ingest can run in-process or in a
+# sibling worker container that mounts the same volume.
 
 FROM python:3.12-slim-bookworm
+
+ARG APP_VERSION=0.1.0
+ARG SCHEMA_VERSION=4
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -10,7 +14,15 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     AIR_HOST=0.0.0.0 \
     AIR_PORT=8899 \
     AIR_DATA_DIR=/data \
-    AIR_AUTO_REFRESH_MIN=60
+    AIR_AUTO_REFRESH_MIN=60 \
+    AIR_SOURCES_PATH=/app/config/sources.yaml \
+    OLLAMA_DEFAULT_CHAT_MODEL=gemma3:4b
+
+LABEL org.opencontainers.image.title="AI Researcher" \
+      org.opencontainers.image.description="Local AI research dashboard" \
+      org.opencontainers.image.version="${APP_VERSION}" \
+      ai.researcher.schema-version="${SCHEMA_VERSION}" \
+      ai.researcher.app-version="${APP_VERSION}"
 
 WORKDIR /app
 
@@ -26,7 +38,9 @@ COPY pyproject.toml README.md LICENSE ./
 COPY src ./src
 COPY config ./config
 
-RUN pip install --no-cache-dir -e . \
+# Regular (non-editable) install. sources.yaml is packaged into the wheel and
+# also copied to /app/config for AIR_SOURCES_PATH / bind-mount overrides.
+RUN pip install --no-cache-dir . \
     && chown -R app:app /app
 
 USER app

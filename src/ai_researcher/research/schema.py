@@ -176,6 +176,19 @@ say so explicitly.""",
 ]
 
 
+def adapt_complete(markdown: str) -> bool:
+    """Adopt/spike requires experiment, prerequisites, risks, and success criteria."""
+    import re
+    text = markdown or ""
+    needed = (
+        r"^#{1,3}\s+Prerequisites\b",
+        r"^#{1,3}\s+First week\b",
+        r"^#{1,3}\s+Risks\b",
+        r"^#{1,3}\s+Done looks like\b",
+    )
+    return all(re.search(p, text, re.IGNORECASE | re.MULTILINE) for p in needed)
+
+
 def index_markdown(pages: dict[str, str]) -> str:
     """Lightweight catalog the next turn reads first, Karpathy-style."""
     lines = ["# Index", ""]

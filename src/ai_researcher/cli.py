@@ -7,6 +7,7 @@ import asyncio
 import json
 import logging
 import sys
+from pathlib import Path
 
 from .config import Settings, load_sources
 from .db import Database
@@ -213,14 +214,28 @@ def cmd_doctor(args) -> int:
           f"({settings.openrouter_model} / {settings.openrouter_premium_model})")
     print(f"  workhorse      : {chat.get('workhorse') or 'NONE — summaries will be extractive'}")
     print(f"  premium        : {chat.get('premium') or 'NONE'}")
+    print(f"  default chat   : {chat.get('default_chat') or settings.ollama_default_chat_model}")
+    print(f"  enrich/judge   : {chat.get('enrich') or '-'} / {chat.get('judge') or '-'}")
+    print(f"  research/brief : {chat.get('research') or '-'} / {chat.get('brief') or '-'}")
     print(f"  ready          : {'yes' if ok else 'NO — ' + (err or chat.get('error') or 'no backend')}")
     print(f"  premium gate   : readiness >= {settings.premium_readiness} "
           f"(research, brief, and high-readiness judgment)")
+    print(f"  resource cap   : {settings.max_model_memory_gb:g} GB, "
+          f"ctx {settings.max_context}, "
+          f"{settings.max_concurrent_generations} concurrent, "
+          f"{settings.daily_model_calls} calls/day")
+    if chat.get("resource_warning"):
+        print(f"  WARNING        : {chat['resource_warning']}")
+    last_embed = db.get_kv("embed_model")
     if not chat.get("embed"):
-        print("  embed model    : NONE — clustering falls back to TF-IDF")
-        print("                   fix: ollama pull nomic-embed-text")
+        print("  embed model    : NONE — clustering falls back to hashed TF-IDF")
+        print("                   TF-IDF catches near-duplicate wording, not")
+        print("                   'same story, different words'. Quality drop is")
+        print("                   real. Fix: ollama pull nomic-embed-text")
     else:
         print(f"  embed model    : {chat.get('embed')}")
+        if last_embed and last_embed != chat.get("embed"):
+            print(f"                   was {last_embed}; stored vectors will be rewritten")
 
     print("\n  ── credentials ──")
     print(f"  GITHUB_TOKEN   : {'set' if settings.github_token else 'NOT SET — 60 req/hr limit'}")
@@ -278,6 +293,138 @@ def cmd_research(args) -> int:
     return 0
 
 
+def cmd_eval(args) -> int:
+    """Run the offline benchmark corpus. No network, no GPU."""
+    from .eval import LAYERS, run_corpus
+
+    layers = tuple(args.layers.split(",")) if args.layers else LAYERS
+    layers = tuple(layer.strip() for layer in layers if layer.strip())
+    report = run_corpus(layers=layers, case_ids=args.case)
+    print(json.dumps(report, indent=2))
+    metrics = (report.get("layers") or {}).get(report.get("best_layer") or "", {}).get("metrics") or {}
+    print(f"\n  corpus {report.get('corpus_version')}  best layer {report.get('best_layer')}")
+    print(f"  format {metrics.get('format_compliance')}  "
+          f"fallback {metrics.get('fallback_rate')}  "
+          f"injection {metrics.get('injection_following_rate')}  "
+          f"hallucinated-ready {metrics.get('hallucinated_recommendation_rate')}")
+    return 0
+
+
+def cmd_compare(args) -> int:
+    """Compare named models against the benchmark corpus.
+
+    Offline (default) scores fixture outputs so CI stays dark. ``--live``
+    actually calls each installed model; that needs Ollama or a cloud key.
+    """
+    from .eval import compare_models, run_corpus
+
+    names = [n.strip() for n in (args.models or []) if n and n.strip()]
+    if not names:
+        print(json.dumps(run_corpus(layers=("schema", "fallback")), indent=2))
+        return 0
+    if not args.live:
+        def generate_for(model_name: str):
+            def generate(case, **_kwargs):
+                return case.get("model_output") or case.get("hostile_model_output") or ""
+            return generate
+
+        print(json.dumps(compare_models(names, generate_for), indent=2))
+        return 0
+    settings, _db = _ctx()
+    print(json.dumps(_compare_live_sync(settings, names), indent=2))
+    return 0
+
+
+def _compare_live_sync(settings: Settings, names: list[str]) -> dict:
+    from .eval import run_corpus
+    from .eval.harness import _ready_of, _stories_of
+    from .sanitize import fence
+    from .trends.brief import PROMPT, SYSTEM
+
+    client = ChatRouter(settings)
+
+    async def setup():
+        await client.probe()
+        return client.available
+
+    if not asyncio.run(setup()):
+        asyncio.run(client.aclose())
+        return {"error": client.last_error or "no chat backend", "models": {}}
+
+    out: dict = {"models": {}}
+    try:
+        for name in names:
+            def generate(case, model=name, **_k):
+                prompt = PROMPT.format(
+                    stories=fence("STORY", json.dumps(_stories_of(case))[:2000], limit=2000),
+                    rising=fence("RISING", "none", limit=40),
+                    ready=fence("READY", json.dumps(_ready_of(case))[:800], limit=800),
+                )
+
+                async def once():
+                    return await client.generate_text(
+                        prompt, system=SYSTEM, num_predict=850,
+                        premium=True, role="brief", model=model,
+                    ) or ""
+
+                return asyncio.run(once())
+
+            out["models"][name] = run_corpus(
+                generate=generate, layers=("schema", "fallback"),
+            )
+    finally:
+        asyncio.run(client.aclose())
+    return out
+
+
+def cmd_backup(args) -> int:
+    from .backup import backup_database, integrity_check
+
+    settings, db = _ctx()
+    if args.check:
+        ok, msg = integrity_check(settings.db_path)
+        print(json.dumps({"path": str(settings.db_path), "ok": ok, "integrity": msg}))
+        return 0 if ok else 1
+    dest = Path(args.out) if args.out else None
+    result = backup_database(db, dest)
+    print(json.dumps(result, indent=2))
+    return 0
+
+
+def cmd_restore(args) -> int:
+    from .backup import restore_database
+
+    settings, _db = _ctx()
+    src = Path(args.src)
+    dest = Path(args.dest) if args.dest else settings.db_path
+    if not args.yes:
+        print("refusing to restore without --yes (this replaces the database file)")
+        return 2
+    result = restore_database(src, dest)
+    print(json.dumps(result, indent=2))
+    return 0
+
+
+def cmd_worker(args) -> int:
+    """Ingest loop for the Compose worker profile. Shares the data volume."""
+    import time
+
+    settings, db = _ctx()
+    interval = max(1, int(args.interval or 60))
+    pipeline = Pipeline(settings, db)
+    print(f"  worker interval {interval} min  data {settings.data_dir}")
+    while True:
+        result = asyncio.run(pipeline.run(force_brief=args.force_brief))
+        print(json.dumps({
+            "status": result.get("status"),
+            "run_id": result.get("run_id"),
+            "elapsed_s": result.get("elapsed_s"),
+        }))
+        if args.once:
+            return 0 if result.get("status") in ("ok", "partial", "busy") else 1
+        time.sleep(interval * 60)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="ai-researcher", description="Local AI trends dashboard"
@@ -321,6 +468,33 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--limit", type=int, default=None, help="max stories to research")
     p.add_argument("--force", action="store_true", help="rewrite existing briefs")
     p.set_defaults(fn=cmd_research)
+
+    p = sub.add_parser("eval", help="run the offline quality corpus")
+    p.add_argument("--layers", default="", help="comma-separated harness layers")
+    p.add_argument("--case", action="append", help="limit to case id (repeatable)")
+    p.set_defaults(fn=cmd_eval)
+
+    p = sub.add_parser("compare", help="compare models on the quality corpus")
+    p.add_argument("--models", nargs="+", default=[], help="model tags to compare")
+    p.add_argument("--live", action="store_true", help="call each model (needs Ollama or a key)")
+    p.set_defaults(fn=cmd_compare)
+
+    p = sub.add_parser("backup", help="copy the SQLite database via the backup API")
+    p.add_argument("--out", help="destination path")
+    p.add_argument("--check", action="store_true", help="integrity-check the live database only")
+    p.set_defaults(fn=cmd_backup)
+
+    p = sub.add_parser("restore", help="restore a backup over the live database")
+    p.add_argument("src", help="backup file")
+    p.add_argument("--dest", help="destination database path")
+    p.add_argument("--yes", action="store_true", help="confirm replacing the database")
+    p.set_defaults(fn=cmd_restore)
+
+    p = sub.add_parser("worker", help="run ingest on an interval (Compose worker profile)")
+    p.add_argument("--interval", type=int, default=60, help="minutes between runs")
+    p.add_argument("--once", action="store_true", help="run once and exit")
+    p.add_argument("--force-brief", action="store_true")
+    p.set_defaults(fn=cmd_worker)
 
     args = parser.parse_args(argv)
     _log(args.log)

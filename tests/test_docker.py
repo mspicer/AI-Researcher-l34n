@@ -18,10 +18,15 @@ class TestDockerfile:
         assert "COPY .env" not in text
         assert "COPY data" not in text
 
-    def test_installs_editable_so_sources_yaml_resolves(self):
-        """Non-editable install would point PROJECT_ROOT at site-packages."""
+    def test_installs_non_editable_with_packaged_sources(self):
+        """Runtime image is a regular install; catalog is copied and packaged."""
         text = ROOT.joinpath("Dockerfile").read_text(encoding="utf-8")
-        assert "pip install" in text and "-e ." in text
+        assert "pip install" in text
+        assert "pip install --no-cache-dir ." in text
+        assert "-e ." not in text
+        assert "AIR_SOURCES_PATH=/app/config/sources.yaml" in text
+        assert "ai.researcher.schema-version" in text
+        assert "OLLAMA_DEFAULT_CHAT_MODEL=gemma3:4b" in text
 
 
 class TestDockerignore:
@@ -44,3 +49,6 @@ class TestCompose:
         assert app["environment"]["AIR_DATA_DIR"] == "/data"
         assert "ollama" in compose["services"]
         assert "ollama" in compose["services"]["ollama"].get("profiles", [])
+        worker = compose["services"]["worker"]
+        assert "worker" in worker.get("profiles", [])
+        assert any(str(v).endswith(":/data") for v in worker["volumes"])

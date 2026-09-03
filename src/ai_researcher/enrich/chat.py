@@ -13,13 +13,17 @@ No keys required. Missing backends drop out; the run still finishes.
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 import re
+from pathlib import Path
 from typing import Any
 
 import httpx
 
 from ..config import Settings
+from ..util import local_day
 from .ollama import OllamaClient, _parse_json_object
 
 log = logging.getLogger("ai_researcher.chat")
@@ -37,6 +41,36 @@ def redact_secrets(text: str) -> str:
     if not text:
         return text
     return _SECRET.sub(lambda m: (m.group(1) or m.group(2) or "") + "REDACTED", text)
+
+
+def consume_daily_budget(data_dir: Path, *, limit: int, day: str | None = None) -> bool:
+    """True when a model call is allowed. Increments the on-disk counter.
+
+    A limit of 0 or less means unlimited. The file is best-effort: two
+    processes can race, which is acceptable for a soft daily cap.
+    """
+    if limit <= 0:
+        return True
+    day = day or local_day()
+    path = Path(data_dir) / "model_budget.json"
+    payload = {"day": day, "count": 0}
+    try:
+        if path.is_file():
+            payload = json.loads(path.read_text(encoding="utf-8")) or payload
+    except (OSError, ValueError):
+        payload = {"day": day, "count": 0}
+    if payload.get("day") != day:
+        payload = {"day": day, "count": 0}
+    if int(payload.get("count") or 0) >= limit:
+        return False
+    payload["count"] = int(payload.get("count") or 0) + 1
+    try:
+        if not Path(data_dir).is_dir():
+            return True
+        path.write_text(json.dumps(payload), encoding="utf-8")
+    except OSError:
+        pass
+    return True
 
 
 class OpenAICompatChat:
@@ -213,6 +247,7 @@ class ChatRouter:
         self._gemini = gemini
         self.available = False
         self.last_error = ""
+        self._gen_gate = asyncio.Semaphore(max(1, int(settings.max_concurrent_generations or 1)))
 
     def _openrouter_backend(self) -> Any:
         if self._openrouter is _UNSET:
@@ -259,7 +294,16 @@ class ChatRouter:
             return self.ollama, ollama_model
         return None, ""
 
-    def model_for(self, *, premium: bool = False) -> str:
+    def model_for(self, *, premium: bool = False, role: str = "") -> str:
+        s = self.settings
+        if role == "enrich" and s.ollama_enrich_model:
+            return s.ollama_enrich_model
+        if role == "judge" and s.ollama_judge_model:
+            return s.ollama_judge_model
+        if role == "research" and s.ollama_research_model:
+            return s.ollama_research_model
+        if role == "brief" and s.ollama_brief_model:
+            return s.ollama_brief_model
         return self._pair(premium)[1]
 
     @property
@@ -275,15 +319,31 @@ class ChatRouter:
         return list(getattr(self.ollama, "installed", []) or [])
 
     def describe(self) -> dict[str, Any]:
+        chat = self.model_for(premium=False)
+        warn = ""
+        from .ollama import model_over_budget, param_billions
+        size = param_billions(self.ollama.chat_model if self.ollama.chat_model else chat)
+        if model_over_budget(self.ollama.chat_model or chat, max_gb=self.settings.max_model_memory_gb):
+            warn = (
+                f"configured model looks larger than AIR_MAX_MODEL_MEMORY_GB="
+                f"{self.settings.max_model_memory_gb}"
+            )
         return {
             "available": self.available,
-            "workhorse": self.model_for(premium=False),
+            "workhorse": chat,
             "premium": self.model_for(premium=True),
             "ollama": getattr(self.ollama, "chat_model", "") or "",
             "embed": self.embed_model,
+            "enrich": self.model_for(role="enrich"),
+            "judge": self.model_for(role="judge"),
+            "research": self.model_for(premium=True, role="research"),
+            "brief": self.model_for(premium=True, role="brief"),
             "gemini": bool(self.settings.gemini_api_key),
             "openrouter": bool(self.settings.openrouter_api_key),
             "premium_readiness": self.settings.premium_readiness,
+            "default_chat": self.settings.ollama_default_chat_model,
+            "param_b": size,
+            "resource_warning": warn,
             "error": self.last_error or getattr(self.ollama, "last_error", "") or "",
         }
 
@@ -313,11 +373,37 @@ class ChatRouter:
         temperature: float = 0.1,
         premium: bool = False,
         model: str | None = None,
+        role: str = "",
     ) -> dict[str, Any] | None:
         backend, use_model = self._pair(premium)
-        use_model = model or use_model
+        use_model = model or self.model_for(premium=premium, role=role) or use_model
         if backend is None or not use_model:
             return None
+        async with self._gen_gate:
+            if not consume_daily_budget(
+                self.settings.data_dir, limit=int(self.settings.daily_model_calls or 0)
+            ):
+                self.last_error = "daily model-call budget exhausted"
+                log.warning("%s — degrading to rules", self.last_error)
+                return None
+            return await self._generate_json_unlocked(
+                backend, use_model, prompt,
+                system=system, schema=schema, num_predict=num_predict,
+                temperature=temperature, premium=premium,
+            )
+
+    async def _generate_json_unlocked(
+        self,
+        backend: Any,
+        use_model: str,
+        prompt: str,
+        *,
+        system: str,
+        schema: dict[str, Any] | None,
+        num_predict: int,
+        temperature: float,
+        premium: bool,
+    ) -> dict[str, Any] | None:
         if backend is self.ollama:
             return await self.ollama.generate_json(
                 prompt,
@@ -352,11 +438,37 @@ class ChatRouter:
         timeout: float | None = None,
         premium: bool = False,
         model: str | None = None,
+        role: str = "",
     ) -> str | None:
         backend, use_model = self._pair(premium)
-        use_model = model or use_model
+        use_model = model or self.model_for(premium=premium, role=role) or use_model
         if backend is None or not use_model:
             return None
+        async with self._gen_gate:
+            if not consume_daily_budget(
+                self.settings.data_dir, limit=int(self.settings.daily_model_calls or 0)
+            ):
+                self.last_error = "daily model-call budget exhausted"
+                log.warning("%s — degrading to rules", self.last_error)
+                return None
+            return await self._generate_text_unlocked(
+                backend, use_model, prompt,
+                system=system, num_predict=num_predict,
+                temperature=temperature, timeout=timeout, premium=premium,
+            )
+
+    async def _generate_text_unlocked(
+        self,
+        backend: Any,
+        use_model: str,
+        prompt: str,
+        *,
+        system: str,
+        num_predict: int,
+        temperature: float,
+        timeout: float | None,
+        premium: bool,
+    ) -> str | None:
         if backend is self.ollama:
             return await self.ollama.generate_text(
                 prompt,

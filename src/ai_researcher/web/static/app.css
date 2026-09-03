@@ -607,6 +607,23 @@ td.num { text-align: right; font: 12px var(--mono); font-variant-numeric: tabula
 
 .pager { display: flex; gap: 10px; justify-content: center; padding: 20px; }
 
+.pill.fresh-fresh { color: var(--lime); }
+.pill.fresh-aging { color: var(--amber); }
+.pill.fresh-stale, .pill.fresh-superseded { color: var(--red); }
+.pill.fresh-revalidated { color: var(--cyan); }
+.story.stale { opacity: .78; }
+.brief-sources { margin-top: 12px; font: 12px var(--mono); color: var(--text-dim); }
+.brief-stale { color: var(--amber); font-size: 13px; }
+.brief-regen { margin-top: 12px; }
+button.fb {
+  border: 1px solid var(--border); background: transparent; color: var(--text-dim);
+  font: 600 10px var(--mono); letter-spacing: .06em; text-transform: uppercase;
+  padding: 1px 6px; border-radius: 8px; cursor: pointer;
+}
+button.fb:hover { color: var(--cyan); border-color: var(--cyan); }
+.st.partial { color: var(--amber); }
+.st.busy { color: var(--amber); }
+
 /* ── scrollbar ───────────────────────────────────────────────── */
 * { scrollbar-width: thin; scrollbar-color: var(--border-hi) transparent; }
 ::-webkit-scrollbar { width: 10px; height: 10px; }

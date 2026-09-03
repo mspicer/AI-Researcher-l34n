@@ -9,14 +9,38 @@
     <section class="panel brief">
       <h3>
         <span>Daily Brief · {{ day }}</span>
-        <span>{% if brief and brief.model %}{{ brief.model }}{% elif brief %}template{% endif %}</span>
+        <span>
+          {% if brief and brief.stale %}stale{% endif %}
+          {% if brief and brief.fallback %} · template{% endif %}
+          {% if brief and brief.model %}{{ brief.model }}{% elif brief %}template{% endif %}
+        </span>
       </h3>
       <div class="body">
         {% if brief %}
           {{ brief.markdown|markdown|safe }}
+          {% if brief.provenance and brief.provenance.stories %}
+          <p class="brief-sources">
+            Sources:
+            {% for s in brief.provenance.stories %}
+              <a class="pill" href="#story-{{ s.cluster_id }}" title="{{ s.label }}">{{ s.token }}</a>
+            {% endfor %}
+            {% for r in brief.provenance.ready or [] %}
+              {% if r.research_id %}
+              <a class="pill lab" href="/adapt/{{ r.research_id }}" title="{{ r.title }}">{{ r.decision or 'ready' }}</a>
+              {% endif %}
+            {% endfor %}
+          </p>
+          {% endif %}
+          {% if brief.stale %}
+            <p class="brief-stale">Inputs changed since this brief was written
+            {% if brief.invalidation_reason %} ({{ brief.invalidation_reason }}){% endif %}.</p>
+          {% endif %}
           {% if not brief.is_today %}
             <hr><em>No brief for today yet — showing {{ brief.day }}.</em>
           {% endif %}
+          <form method="post" action="/api/brief/regenerate" class="brief-regen">
+            <button class="btn" type="submit" id="regen-brief">Regenerate brief</button>
+          </form>
         {% else %}
           <p style="color:var(--text-dim)">No brief yet. Run an ingest, then
           <code>ai-researcher brief</code>.</p>

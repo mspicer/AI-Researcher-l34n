@@ -40,8 +40,9 @@ That runs the dashboard continuously and ingests once an hour.
 
 ## Docker
 
-One container serves the dashboard and runs ingest on a 60-minute timer.
-SQLite lives in a volume, so rebuilds keep your history.
+One container serves the dashboard. Ingest can run in-process (default, every
+60 minutes) or in a sibling worker that shares the `/data` volume. SQLite lives
+in that volume, so rebuilds keep your history.
 
 ```bash
 cp .env.example .env          # optional: GitHub token, Gemini/OpenRouter keys
@@ -54,25 +55,35 @@ Then open http://localhost:8899
 docker compose logs -f ai-researcher
 docker compose exec ai-researcher ai-researcher doctor
 docker compose exec ai-researcher ai-researcher run     # ingest now, don't wait
+docker compose exec ai-researcher ai-researcher backup
 ```
 
 **Ollama.** The default `OLLAMA_HOST` is `http://host.docker.internal:11434`,
-so a Compose stack on Linux/macOS/Windows talks to Ollama on the host. To run
-Ollama in Compose as well:
+so a Compose stack on Linux/macOS/Windows talks to Ollama on the host. Auto-pick
+prefers `gemma3:4b` and will not load a 30B tag just because it is installed.
+To run Ollama in Compose as well:
 
 ```bash
 OLLAMA_HOST=http://ollama:11434 docker compose --profile ollama up -d --build
 ```
 
-Pull models on the host (`ollama pull qwen3:4b && ollama pull nomic-embed-text`)
-or `docker compose exec ollama ollama pull qwen3:4b` if you used the profile.
+**Split dashboard and worker** (avoids colliding a manual `run` with the
+in-process timer):
 
-**No GPU.** Set `GEMINI_API_KEY` or `OPENROUTER_API_KEY` in `.env` and skip
-Ollama. Clustering falls back to TF-IDF; the dashboard still works.
+```bash
+AIR_AUTO_REFRESH_MIN=0 docker compose --profile worker up -d --build
+```
+
+**No GPU / cloud-only.** Set `GEMINI_API_KEY` or `OPENROUTER_API_KEY` in `.env`
+and skip Ollama. Clustering falls back to hashed TF-IDF; the dashboard still
+works.
 
 `AIR_AUTO_REFRESH_MIN` defaults to 60 in Compose (systemd users leave it at 0
 so the timer is the only scheduler). Set `AIR_ACCESS_TOKEN` if the port will
-be reachable beyond a trusted LAN.
+be reachable beyond a trusted LAN. `/healthz` is liveness, `/readyz` checks
+the database, `/health` reports source and model status. The image is a
+regular (non-editable) install; bind-mount `/app/config/sources.yaml` to
+override the catalog.
 
 ## How it works
 
@@ -132,11 +143,15 @@ Deep research is bounded separately by `AIR_RESEARCH_BUDGET` /
 | `ai-researcher run --no-ingest` | Re-analyse what's stored, no fetching |
 | `ai-researcher run --source simonw` | Limit to one source (repeatable) |
 | `ai-researcher serve` | Web dashboard |
+| `ai-researcher worker` | Interval ingest loop (Compose `--profile worker`) |
 | `ai-researcher doctor` | Diagnose everything that silently degrades |
 | `ai-researcher sources` | Per-source health table |
 | `ai-researcher brief` | Print / regenerate today's brief |
 | `ai-researcher research` | Re-judge and write deep-research briefs |
 | `ai-researcher recluster` | Rebuild stories and topic history |
+| `ai-researcher eval` | Offline quality corpus (no network, no GPU) |
+| `ai-researcher compare --models a b` | Score two models against the corpus |
+| `ai-researcher backup` / `restore` | SQLite backup API + integrity check |
 | `ai-researcher stats` | Counters as JSON |
 
 **`doctor` first** whenever something looks wrong — it reports the model in use,
@@ -224,7 +239,7 @@ Two things dominate throughput on a small GPU:
 Recommended pulls:
 
 ```bash
-ollama pull qwen3:4b            # chat: fits a 6 GiB card comfortably
+ollama pull gemma3:4b           # default chat: fits a 6 GiB card
 ollama pull nomic-embed-text    # embeddings: much better clustering, 274 MB
 ```
 
@@ -312,7 +327,11 @@ clustering thresholds.
 
 Everything lives in `data/airesearch.db` (SQLite, WAL). Items older than
 `AIR_RETENTION_DAYS` (120) are pruned automatically — except anything you've
-starred, which is kept indefinitely. Back it up by copying the file.
+starred **or that has a research brief**, which is kept indefinitely.
+`ai-researcher backup` copies the database via SQLite's backup API and
+integrity-checks the copy; `ai-researcher restore --yes backup.db` replaces
+the live file. Do not copy a live WAL database with `cp` while ingest is
+running.
 
 ## Contributing
 

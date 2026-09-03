@@ -62,6 +62,9 @@
       {{ verdict_pill(item.verdict) }}
       <span class="src">{{ item.source_name }}</span>
       <span class="dotsep"></span><span>{{ item.age }}</span>
+      {% if item.freshness_status and item.freshness_status != 'fresh' %}
+        <span class="pill fresh-{{ item.freshness_status }}">{{ item.freshness_status }}</span>
+      {% endif %}
       {% if item.domain %}<span class="dotsep"></span><span>{{ item.domain }}</span>{% endif %}
       {% if item.engagement %}<span class="pill">▲ {{ item.engagement }}</span>{% endif %}
       {% if item.comments %}<span class="pill">💬 {{ item.comments }}</span>{% endif %}
@@ -74,6 +77,9 @@
       {% if item.research_id %}
         <a class="pill lab" href="/adapt/{{ item.research_id }}">lab notes</a>
       {% endif %}
+      <button class="fb" data-id="{{ item.id }}" data-kind="useful" title="Mark useful">useful</button>
+      <button class="fb" data-id="{{ item.id }}" data-kind="irrelevant" title="Mark irrelevant">hide</button>
+      <button class="fb" data-id="{{ item.id }}" data-kind="stale" title="Mark stale">stale</button>
     </div>
   </div>
   {{ savebtn(item) }}
@@ -82,7 +88,7 @@
 
 {# A clustered story: the primary item plus everything else covering it. #}
 {% macro story_card(story, rank) -%}
-<article class="story {{ 'hot' if story.source_count >= 3 or story.research_id }}">
+<article class="story {{ 'hot' if story.source_count >= 3 or story.research_id }} {{ 'stale' if story.stale or story.freshness_status == 'stale' }}" id="story-{{ story.id }}">
   <div class="story-head">
     <span class="rank">{{ rank }}</span>
     <h3>{{ ext_link(story.primary.url, story.label) }}</h3>
@@ -100,8 +106,14 @@
   <div class="meta">
     {{ badge(story.category, story.category_label) }}
     {{ verdict_pill(story.verdict) }}
+    {% if story.freshness_status %}
+      <span class="pill fresh-{{ story.freshness_status }}" title="{{ story.ranking_why }}">{{ story.freshness_status }}</span>
+    {% endif %}
+    {% if story.confidence %}
+      <span class="pill" title="corroboration · source quality · recency">conf {{ '%.2f'|format(story.confidence) }}</span>
+    {% endif %}
     {% if story.source_count > 1 %}
-      <span class="pill corr">{{ story.source_count }} sources</span>
+      <span class="pill corr" title="{{ story.ranking_why }}">{{ story.source_count }} sources</span>
     {% else %}
       <span class="src">{{ story.primary.source_name }}</span>
     {% endif %}

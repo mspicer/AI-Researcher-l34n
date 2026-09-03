@@ -14,7 +14,7 @@ from ai_researcher.db import Database, jdump
 from ai_researcher.enrich.judge import Judge
 from ai_researcher.enrich.ollama import OllamaClient
 from ai_researcher.research.fallback import render_page
-from ai_researcher.research.schema import TURNS, index_markdown
+from ai_researcher.research.schema import TURNS, adapt_complete, index_markdown
 from ai_researcher.research.wiki import (
     DeepResearcher,
     decision_to_verdict,
@@ -249,6 +249,15 @@ class _PremiumChat:
             + "Weights, license, and RTX notes for a practitioner. " * 6
         )
 
-    def model_for(self, *, premium=False):
+    def model_for(self, *, premium=False, role=""):
         return "stub:premium" if premium else self.chat_model
+
+
+class TestAdaptComplete:
+    def test_requires_experiment_fields(self):
+        assert not adapt_complete("# Adapt\n## Decision\nadopt\n")
+        assert adapt_complete(
+            "# Adapt\n## Prerequisites\nx\n## First week\n1.\n"
+            "## Risks\ny\n## Done looks like\nz\n"
+        )
 
