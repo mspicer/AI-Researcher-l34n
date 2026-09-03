@@ -283,8 +283,9 @@ class ProviderClient:
                        max_tokens: int = 900, temperature: float = 0.35,
                        timeout: float) -> str:
         # OpenAICompatChat.complete returns str|None and doesn't surface usage.
-        # We reimplement the POST here so we can capture token usage & retry
-        # with a per-provider prompt shape.
+        # We reimplement the POST here so we can capture token usage and to add
+        # a 429/5xx backoff since parallel sweeps against OpenRouter otherwise
+        # trip rate limits within seconds.
         import httpx
         body = {
             "model": self.spec.model,
@@ -301,13 +302,30 @@ class ProviderClient:
             "HTTP-Referer": "https://apex.local/l34n-benchmark",
             "X-Title": "L34N APE-711 benchmark",
         }
+        backoffs = [2.0, 5.0, 10.0, 20.0]
         async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=10.0)) as c:
-            r = await c.post(
-                "https://openrouter.ai/api/v1/chat/completions",
-                json=body, headers=headers,
-            )
-            r.raise_for_status()
-            data = r.json()
+            for attempt, wait_s in enumerate([0.0] + backoffs):
+                if wait_s > 0:
+                    await asyncio.sleep(wait_s)
+                r = await c.post(
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    json=body, headers=headers,
+                )
+                if r.status_code == 429 or 500 <= r.status_code < 600:
+                    # honour Retry-After if present, else fall through to next backoff
+                    retry_after = r.headers.get("retry-after")
+                    if retry_after:
+                        try:
+                            await asyncio.sleep(min(30.0, float(retry_after)))
+                        except ValueError:
+                            pass
+                    if attempt < len(backoffs):
+                        continue
+                r.raise_for_status()
+                data = r.json()
+                break
+            else:  # pragma: no cover — final attempt already raised
+                return ""
         usage = data.get("usage") or {}
         self.stats.input_tokens += int(usage.get("prompt_tokens") or 0)
         self.stats.output_tokens += int(usage.get("completion_tokens") or 0)
