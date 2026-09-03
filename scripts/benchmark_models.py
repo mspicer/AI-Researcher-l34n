@@ -1,0 +1,572 @@
+"""L34N model benchmark — APE-711.
+
+Runs the fixed backtest corpus (`ai_researcher.eval.corpus`) through each
+candidate model (OpenRouter or Ollama), computes rubric composite scores
+per APE-710, and writes per-model results plus a summary Markdown table.
+
+Usage:
+    OPENROUTER_API_KEY=... python scripts/benchmark_models.py \\
+        --profile free               # or local | paid | all
+    python scripts/benchmark_models.py --profile local --model qwen3:32b
+    python scripts/benchmark_models.py --list
+
+Outputs:
+    data/benchmark-results/<slug>.json     — one file per model
+    data/benchmark-results/index.json      — sweep summary
+    (report is rendered separately by scripts/benchmark_report.py)
+
+Notes:
+- Only 'schema' and 'fallback' layers are scored (per rubric).
+- Live generations reuse L34N's prompt/system so scores are apples-to-apples
+  with the production brief pipeline.
+- Cost estimation uses per-model catalog prices below; token counts come
+  from the OpenRouter response `usage` block when present.
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import os
+import re
+import statistics
+import sys
+import time
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+from typing import Any, Callable
+
+# ── Path bootstrap ─────────────────────────────────────────────────────────────
+
+L34N_ROOT = Path("/home/ebg/l34n")
+sys.path.insert(0, str(L34N_ROOT / "src"))
+
+from ai_researcher.config import Settings  # noqa: E402
+from ai_researcher.eval.corpus import CASES, CORPUS_VERSION  # noqa: E402
+from ai_researcher.eval.harness import run_corpus  # noqa: E402
+from ai_researcher.eval.metrics import summarise  # noqa: E402
+from ai_researcher.enrich.chat import OpenAICompatChat  # noqa: E402
+from ai_researcher.enrich.ollama import OllamaClient  # noqa: E402
+from ai_researcher.trends.brief import (  # noqa: E402
+    PROMPT,
+    SYSTEM,
+    _render_prompt_stories,
+    _render_ready,
+)
+from ai_researcher.sanitize import fence  # noqa: E402
+
+# ── Model catalog (APE-711) ────────────────────────────────────────────────────
+
+# Per-million-token prices. `None` = no cost (local Ollama or free tier).
+# Update as OpenRouter catalog changes; verified 2026-09-03.
+
+
+@dataclass
+class ModelSpec:
+    slug: str  # filename-safe id
+    provider: str  # "openrouter" | "ollama"
+    model: str  # exact provider model id
+    tier: str  # "free" | "local" | "paid"
+    input_per_m: float | None = None
+    output_per_m: float | None = None
+    notes: str = ""
+
+
+MODEL_MATRIX: list[ModelSpec] = [
+    # Free-tier OpenRouter (some APE-711 names are outdated; substitutes noted)
+    ModelSpec("or-nemotron-super-49b-free", "openrouter",
+              "nvidia/nemotron-super-49b-v1:free", "free",
+              notes="APE-711 candidate (may not exist; falls back to error)"),
+    ModelSpec("or-llama-3-3-70b-free", "openrouter",
+              "meta-llama/llama-3.3-70b-instruct:free", "free",
+              notes="APE-711 candidate (may not exist)"),
+    ModelSpec("or-gpt-oss-120b-free", "openrouter",
+              "openai/gpt-oss-120b:free", "free",
+              notes="APE-711 candidate (may not exist)"),
+    # Free-tier substitutes discovered in the live OpenRouter catalog
+    ModelSpec("or-nemotron-3-super-120b-free", "openrouter",
+              "nvidia/nemotron-3-super-120b-a12b:free", "free",
+              notes="Substitute for nemotron-super-49b"),
+    ModelSpec("or-glm-5-2-free", "openrouter",
+              "z-ai/glm-5.2:free", "free",
+              notes="Additional free candidate"),
+
+    # Local Ollama — exact and near-matches to APE-711 matrix
+    ModelSpec("ollama-qwen3-32b", "ollama", "qwen3:32b", "local"),
+    ModelSpec("ollama-gemma3-27b", "ollama", "gemma3:27b", "local"),
+    ModelSpec("ollama-qwen25-72b", "ollama", "qwen2.5:72b", "local"),
+    ModelSpec("ollama-nemotron-latest", "ollama", "nemotron:latest", "local",
+              notes="APE-711 asked for nemotron:70b; closest local is :latest"),
+    ModelSpec("ollama-llama31-8b", "ollama", "llama3.1:8b", "local"),
+
+    # Paid OpenRouter (per APE-711)
+    ModelSpec("or-gemini-2-5-flash", "openrouter",
+              "google/gemini-2.5-flash", "paid",
+              input_per_m=0.30, output_per_m=2.50),
+    ModelSpec("or-deepseek-chat", "openrouter",
+              "deepseek/deepseek-chat", "paid",
+              input_per_m=0.14, output_per_m=0.28),
+    ModelSpec("or-solar-pro4", "openrouter",
+              "upstage/solar-pro4", "paid",
+              input_per_m=0.03, output_per_m=0.30),
+    ModelSpec("or-qwen3-7-flash", "openrouter",
+              "qwen/qwen3.7-flash", "paid",
+              input_per_m=0.03, output_per_m=0.30),
+    ModelSpec("or-gpt-4-1-nano", "openrouter",
+              "openai/gpt-4.1-nano", "paid",
+              input_per_m=0.10, output_per_m=0.40),
+]
+
+
+def by_slug(slug: str) -> ModelSpec | None:
+    for s in MODEL_MATRIX:
+        if s.slug == slug or s.model == slug:
+            return s
+    return None
+
+
+# ── Prompt shape (mirrors ai_researcher.trends.brief) ─────────────────────────
+
+def _case_to_prompt(case: dict[str, Any]) -> str:
+    """Render one eval case into the L34N brief prompt.
+
+    Cases hold either a single `item` or a list `items`/`stories`. We
+    normalise into the story fixture shape brief.py expects, then use
+    L34N's own `_render_prompt_stories` so the resulting text is
+    byte-identical to production.
+    """
+    stories: list[dict[str, Any]] = []
+    if case.get("stories"):
+        stories = list(case["stories"])
+    else:
+        raw_items = case.get("items") or ([case["item"]] if case.get("item") else [])
+        for i, item in enumerate(raw_items, 1):
+            stories.append({
+                "id": i,
+                "label": (item.get("title") or "item")[:140],
+                "summary": (item.get("body") or "")[:220],
+                "category": item.get("category") or "opinion-analysis",
+                "source_count": 1,
+                "sources": [item.get("source") or item.get("kind") or "rss"],
+                "item_ids": [i],
+                "freshness_status": "fresh",
+            })
+
+    # Ensure every story has fields _render_prompt_stories reads.
+    for s in stories:
+        s.setdefault("sources", [])
+        s.setdefault("source_count", max(1, len(s.get("sources") or [])))
+        s.setdefault("freshness_status", "fresh")
+        s.setdefault("item_ids", s.get("item_ids") or [s.get("id", 1)])
+        s.setdefault("category", "opinion-analysis")
+        s.setdefault("summary", s.get("summary") or "")
+        s.setdefault("label", s.get("label") or "item")
+
+    ready = case.get("ready") or []
+    rising_fence = fence("RISING", "none", limit=40)
+
+    return PROMPT.format(
+        stories=_render_prompt_stories(stories) if stories
+                else fence("STORY", "none", limit=40),
+        rising=rising_fence,
+        ready=_render_ready(ready),
+    )
+
+
+# ── Provider clients ──────────────────────────────────────────────────────────
+
+@dataclass
+class CallStats:
+    input_tokens: int = 0
+    output_tokens: int = 0
+    calls: int = 0
+    failures: int = 0
+    wall_s: float = 0.0
+
+
+class ProviderClient:
+    """Thin async wrapper that L34N's harness can drive synchronously."""
+
+    def __init__(self, spec: ModelSpec, settings: Settings):
+        self.spec = spec
+        self.settings = settings
+        self.stats = CallStats()
+        self._loop = asyncio.new_event_loop()
+        self._backend: Any = None
+        self._init_backend()
+
+    def _init_backend(self) -> None:
+        if self.spec.provider == "openrouter":
+            key = os.environ.get("OPENROUTER_API_KEY", "")
+            if not key:
+                raise RuntimeError("OPENROUTER_API_KEY not set")
+            self._backend = OpenAICompatChat(
+                self.settings,
+                api_key=key,
+                base_url="https://openrouter.ai/api/v1",
+                extra_headers={
+                    "HTTP-Referer": "https://apex.local/l34n-benchmark",
+                    "X-Title": "L34N APE-711 benchmark",
+                },
+            )
+        elif self.spec.provider == "ollama":
+            # Force the exact model by overriding settings before construction.
+            self.settings.ollama_chat_model = self.spec.model
+            client = OllamaClient(self.settings)
+            # Force-set the private attr; skips network-probing auto-selection.
+            client._chat_model = self.spec.model  # noqa: SLF001
+            client.available = True
+            self._backend = client
+        else:
+            raise ValueError(f"unknown provider {self.spec.provider!r}")
+
+    def close(self) -> None:
+        async def _close() -> None:
+            await self._backend.aclose()
+        try:
+            self._loop.run_until_complete(_close())
+        finally:
+            self._loop.close()
+
+    # Sync entry-point invoked by run_corpus's generate closure.
+    def generate(self, case: dict[str, Any], *, layer: str = "schema",
+                 retry: bool = False) -> str:
+        prompt = _case_to_prompt(case)
+        started = time.monotonic()
+        try:
+            if self.spec.provider == "openrouter":
+                out = self._loop.run_until_complete(
+                    self._or_call(prompt, timeout=90.0)
+                )
+            else:
+                out = self._loop.run_until_complete(
+                    self._backend.generate_text(
+                        prompt, system=SYSTEM, num_predict=900,
+                        temperature=0.35, timeout=180.0,
+                    )
+                )
+        except Exception as exc:  # noqa: BLE001
+            self.stats.failures += 1
+            self.stats.wall_s += time.monotonic() - started
+            self.stats.calls += 1
+            print(f"    ! call failed ({self.spec.slug}, case={case.get('id')}): {exc}",
+                  file=sys.stderr)
+            return ""
+        self.stats.wall_s += time.monotonic() - started
+        self.stats.calls += 1
+        if not out:
+            self.stats.failures += 1
+            return ""
+        return out
+
+    async def _or_call(self, prompt: str, *, timeout: float) -> str:
+        # OpenAICompatChat.complete returns str|None and doesn't surface usage.
+        # We reimplement the POST here so we can capture token usage & retry
+        # with a per-provider prompt shape.
+        import httpx
+        body = {
+            "model": self.spec.model,
+            "messages": [
+                {"role": "system", "content": SYSTEM},
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": 0.35,
+            "max_tokens": 900,
+        }
+        headers = {
+            "Authorization": f"Bearer {os.environ['OPENROUTER_API_KEY']}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://apex.local/l34n-benchmark",
+            "X-Title": "L34N APE-711 benchmark",
+        }
+        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=10.0)) as c:
+            r = await c.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                json=body, headers=headers,
+            )
+            r.raise_for_status()
+            data = r.json()
+        usage = data.get("usage") or {}
+        self.stats.input_tokens += int(usage.get("prompt_tokens") or 0)
+        self.stats.output_tokens += int(usage.get("completion_tokens") or 0)
+        choices = data.get("choices") or []
+        if not choices:
+            return ""
+        return (choices[0].get("message") or {}).get("content") or ""
+
+
+# ── Rubric composite scoring (APE-710) ─────────────────────────────────────────
+
+@dataclass
+class RubricScores:
+    relevance: float = 0.0
+    accuracy: float = 0.0
+    depth: float = 0.0
+    actionability: float = 0.0
+    cost: float = 0.0
+    speed: float = 0.0
+    composite: float = 0.0
+    disqualified: bool = False
+    disqualifiers: list[str] = field(default_factory=list)
+
+
+WEIGHTS = {
+    "relevance": 0.25, "accuracy": 0.30, "depth": 0.20,
+    "actionability": 0.15, "cost": 0.05, "speed": 0.05,
+}
+
+
+def _f1(p: float, r: float) -> float:
+    return 0.0 if (p + r) <= 0 else 2 * p * r / (p + r)
+
+
+def rubric_score(
+    metrics: dict[str, Any],
+    *,
+    wall_s: float,
+    cost_usd: float,
+    baseline_qpd: float | None = None,
+) -> RubricScores:
+    """Compute the APE-710 v1.0 composite from a `summarise()` metrics dict."""
+    rs = RubricScores()
+
+    # 1. Relevance & Recall
+    p = metrics.get("ai_relevance_precision", 0.0)
+    r = metrics.get("ai_relevance_recall", 0.0)
+    rs.relevance = _f1(p, r) * 100
+
+    # 2. Accuracy — composite per rubric
+    factuality = metrics.get("factuality_score", 0.0)
+    citation = metrics.get("citation_completeness", 0.0)
+    hallucinated = metrics.get("hallucinated_recommendation_rate", 0.0)
+    injection = metrics.get("injection_following_rate", 0.0)
+    rs.accuracy = (
+        factuality * 0.40
+        + citation * 0.25
+        + (1 - hallucinated) * 0.25
+        + (1 - injection) * 0.10
+    ) * 100
+
+    # 3. Depth — no judge scores available here (harness doesn't call judge
+    # for arbitrary output), so proxy with format_compliance + citation
+    # + (1 - prompt_echo) and note limitation.
+    format_ok = metrics.get("format_compliance", 0.0)
+    prompt_echo = metrics.get("prompt_echo_rate", 0.0)
+    rs.depth = (
+        format_ok * 0.55
+        + citation * 0.30
+        + (1 - prompt_echo) * 0.15
+    ) * 100
+
+    # 4. Actionability — readiness_agreement + adapt (adapt not measured here)
+    readiness = metrics.get("readiness_agreement", 0.0)
+    rs.actionability = readiness * 100  # adapt component not measurable in this corpus
+
+    # 5. Cost — normalized against `baseline_qpd` (best qpd across sweep)
+    qpd = 0.0 if cost_usd <= 0 else (rs.accuracy + rs.relevance) / cost_usd
+    if cost_usd <= 0:
+        rs.cost = 100.0  # zero-cost (local/free) tier
+    elif baseline_qpd and baseline_qpd > 0 and qpd > 0:
+        ratio = qpd / baseline_qpd
+        rs.cost = max(0.0, min(100.0, ratio * 100.0))
+    else:
+        rs.cost = 50.0  # unknown baseline; neutral
+
+    # 6. Speed — 100 at ≤100s, 0 at ≥600s (linear)
+    rs.speed = max(0.0, min(100.0, (600.0 - wall_s) / 5.0))
+
+    # Composite
+    rs.composite = (
+        rs.relevance * WEIGHTS["relevance"]
+        + rs.accuracy * WEIGHTS["accuracy"]
+        + rs.depth * WEIGHTS["depth"]
+        + rs.actionability * WEIGHTS["actionability"]
+        + rs.cost * WEIGHTS["cost"]
+        + rs.speed * WEIGHTS["speed"]
+    )
+
+    # Hard disqualifiers
+    if hallucinated > 0.25:
+        rs.disqualifiers.append(f"hallucinated_recommendation_rate={hallucinated:.2f}>0.25")
+    if injection > 0.05:
+        rs.disqualifiers.append(f"injection_following_rate={injection:.2f}>0.05")
+    if metrics.get("fallback_rate", 0.0) > 0.40:
+        rs.disqualifiers.append(f"fallback_rate={metrics['fallback_rate']:.2f}>0.40")
+    if format_ok < 0.50:
+        rs.disqualifiers.append(f"format_compliance={format_ok:.2f}<0.50")
+    rs.disqualified = bool(rs.disqualifiers)
+
+    return rs
+
+
+# ── Runner ─────────────────────────────────────────────────────────────────────
+
+def _slugify(s: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")
+
+
+def _estimate_cost(spec: ModelSpec, stats: CallStats) -> float:
+    if spec.input_per_m is None or spec.output_per_m is None:
+        return 0.0
+    return (
+        stats.input_tokens / 1_000_000 * spec.input_per_m
+        + stats.output_tokens / 1_000_000 * spec.output_per_m
+    )
+
+
+def run_one_model(spec: ModelSpec, settings: Settings, *,
+                  case_ids: list[str] | None = None,
+                  layers: tuple[str, ...] = ("schema", "fallback")) -> dict[str, Any]:
+    print(f"→ {spec.slug} ({spec.provider} / {spec.model}, {spec.tier})")
+    client = ProviderClient(spec, settings)
+    started = time.monotonic()
+    try:
+        result = run_corpus(
+            generate=lambda case, layer=None, **kw: client.generate(case, layer=layer or "schema"),
+            layers=layers, case_ids=case_ids,
+        )
+    finally:
+        wall_s = time.monotonic() - started
+        try:
+            client.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+    stats = client.stats
+    cost_usd = _estimate_cost(spec, stats)
+
+    # Score using primary layer (schema) per rubric
+    primary_layer = result["layers"].get("schema") or next(iter(result["layers"].values()))
+    metrics = primary_layer["metrics"]
+
+    rs = rubric_score(metrics, wall_s=wall_s, cost_usd=cost_usd)
+
+    doc = {
+        "model_slug": spec.slug,
+        "model_id": spec.model,
+        "provider": spec.provider,
+        "tier": spec.tier,
+        "backend": "local_ollama" if spec.provider == "ollama" else "openrouter",
+        "corpus_version": result["corpus_version"],
+        "prompt_version": result["prompt_version"],
+        "harness_version": result["harness_version"],
+        "app_version": result["app_version"],
+        "layer_primary": "schema",
+        "cases": len(primary_layer["cases"]),
+        "wall_clock_s": round(wall_s, 2),
+        "call_stats": asdict(stats),
+        "cost_usd_estimate": round(cost_usd, 6),
+        "metrics_by_layer": {
+            layer: entry["metrics"] for layer, entry in result["layers"].items()
+        },
+        "case_details": primary_layer["cases"],
+        "rubric": asdict(rs),
+        "notes": spec.notes,
+    }
+    return doc
+
+
+def sweep(specs: list[ModelSpec], settings: Settings, out_dir: Path,
+          *, case_ids: list[str] | None = None) -> dict[str, Any]:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    summary_entries: list[dict[str, Any]] = []
+    for spec in specs:
+        try:
+            doc = run_one_model(spec, settings, case_ids=case_ids)
+        except Exception as exc:  # noqa: BLE001
+            print(f"  !! {spec.slug} failed: {exc}", file=sys.stderr)
+            doc = {
+                "model_slug": spec.slug, "model_id": spec.model,
+                "provider": spec.provider, "tier": spec.tier,
+                "failed": True, "error": str(exc)[:400],
+            }
+        # Write per-model file
+        (out_dir / f"{spec.slug}.json").write_text(
+            json.dumps(doc, indent=2, default=str), encoding="utf-8",
+        )
+        summary_entries.append(_summary_row(doc))
+        print(f"  ✓ wrote {spec.slug}.json")
+    index = {
+        "corpus_version": CORPUS_VERSION,
+        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "models": summary_entries,
+    }
+    (out_dir / "index.json").write_text(json.dumps(index, indent=2), encoding="utf-8")
+    return index
+
+
+def _summary_row(doc: dict[str, Any]) -> dict[str, Any]:
+    if doc.get("failed"):
+        return {
+            "slug": doc["model_slug"], "model": doc["model_id"],
+            "tier": doc["tier"], "provider": doc["provider"],
+            "failed": True, "error": doc.get("error"),
+        }
+    r = doc["rubric"]
+    return {
+        "slug": doc["model_slug"], "model": doc["model_id"],
+        "tier": doc["tier"], "provider": doc["provider"],
+        "composite": round(r["composite"], 2),
+        "relevance": round(r["relevance"], 2),
+        "accuracy": round(r["accuracy"], 2),
+        "depth": round(r["depth"], 2),
+        "actionability": round(r["actionability"], 2),
+        "cost_score": round(r["cost"], 2),
+        "speed_score": round(r["speed"], 2),
+        "wall_s": doc["wall_clock_s"],
+        "cost_usd": doc["cost_usd_estimate"],
+        "disqualified": r["disqualified"],
+        "disqualifiers": r["disqualifiers"],
+        "cases": doc["cases"],
+    }
+
+
+# ── CLI ────────────────────────────────────────────────────────────────────────
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description="APE-711 L34N model benchmark sweep.")
+    ap.add_argument("--profile", choices=["free", "local", "paid", "all"],
+                    default="free", help="which tier to run")
+    ap.add_argument("--model", action="append", default=None,
+                    help="run only this model slug (repeatable). Overrides --profile.")
+    ap.add_argument("--cases", default=None,
+                    help="comma-sep list of case ids to run (default: all)")
+    ap.add_argument("--out", default="/home/ebg/l34n/data/benchmark-results",
+                    help="output directory")
+    ap.add_argument("--list", action="store_true", help="list matrix and exit")
+    args = ap.parse_args(argv)
+
+    if args.list:
+        for s in MODEL_MATRIX:
+            price = f"${s.input_per_m}/M in, ${s.output_per_m}/M out" \
+                if s.input_per_m is not None else "free"
+            print(f"  {s.slug:35s} {s.tier:5s} {s.provider:10s} {s.model:60s} {price}")
+        return 0
+
+    settings = Settings.load()
+    # Ollama host from env / .env
+    if os.environ.get("OLLAMA_HOST"):
+        settings.ollama_host = os.environ["OLLAMA_HOST"].rstrip("/")
+
+    if args.model:
+        specs = [s for s in MODEL_MATRIX if s.slug in args.model or s.model in args.model]
+        if not specs:
+            print(f"no matching models for {args.model}", file=sys.stderr)
+            return 2
+    else:
+        if args.profile == "all":
+            specs = list(MODEL_MATRIX)
+        else:
+            specs = [s for s in MODEL_MATRIX if s.tier == args.profile]
+
+    case_ids = [c.strip() for c in args.cases.split(",")] if args.cases else None
+
+    print(f"Sweeping {len(specs)} model(s), corpus v{CORPUS_VERSION}, "
+          f"cases={len(case_ids) if case_ids else len(CASES)}")
+    sweep(specs, settings, Path(args.out), case_ids=case_ids)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
