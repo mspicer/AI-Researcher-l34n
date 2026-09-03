@@ -77,12 +77,16 @@ One paragraph, 2-3 sentences, on the single most consequential item and why. Cit
 stories, not variations of the first one.
 
 ## Worth a closer look
-2-3 bullets on things that are less loud but likely to matter — a paper, a
-tool, a shift in direction. Cite [S#].
+2-3 bullets on quieter items that still deserve time. Each: **bold 3-6 word label**,
+then one sentence that states WHY it deserves a closer look, using the supplied
+facts (under-covered, named artifact, research primary, high usefulness). Cite [S#].
+Do not repeat The one thing.
 
 ## Ready to build
-If ready items are listed above, 2-3 bullets. Each: **adopt** or **spike**
-then the gated title and one sentence on the first experiment. Omit this section if none.
+If ready items are listed above, 2-3 bullets. Each: **adopt** or **spike**,
+the gated title, and one sentence on the first experiment. These become in-app
+links to the deploy guide; do not invent a title that is not listed. Omit this
+section if none.
 
 Rules: no preamble, no closing summary, no hedging phrases like "it seems".
 Refer only to what is listed above. Keep the whole thing under 360 words.
@@ -121,6 +125,22 @@ def _collect_stories(db: Database, day: str, limit: int = 10) -> list[dict[str, 
         item_ids = [m["id"] for m in members]
         if not item_ids:
             continue
+        ph = ",".join("?" * len(item_ids))
+        judged = db.query(
+            f"SELECT quality, practicality, feasibility, usefulness, readiness, "
+            f"verdict, reasons, artifacts FROM judgments WHERE item_id IN ({ph})",
+            tuple(item_ids),
+        )
+        best = max(
+            judged,
+            key=lambda r: float(r["readiness"] or 0),
+            default=None,
+        ) if judged else None
+        research = db.one(
+            f"SELECT id FROM research WHERE status='complete' AND item_id IN ({ph}) "
+            f"ORDER BY readiness DESC LIMIT 1",
+            tuple(item_ids),
+        )
         stories.append({
             "id": row["id"],
             "label": row["label"],
@@ -135,6 +155,12 @@ def _collect_stories(db: Database, day: str, limit: int = 10) -> list[dict[str, 
             "freshness_status": row["freshness_status"] or "fresh",
             "confidence": float(row["confidence"] or 0),
             "ranking_why": row["ranking_why"] or "",
+            "quality": float(best["quality"] or 0) if best else 0,
+            "readiness": float(best["readiness"] or 0) if best else 0,
+            "verdict": (best["verdict"] or "") if best else "",
+            "reasons": jload(best["reasons"], []) if best else [],
+            "artifacts": jload(best["artifacts"], []) if best else [],
+            "research_id": research["id"] if research else 0,
         })
     return stories
 
@@ -148,13 +174,21 @@ def _render_prompt_stories(stories: list[dict[str, Any]]) -> str:
             if s["source_count"] > 1
             else (s["sources"][0] if s["sources"] else "1 source")
         )
+        why = s.get("ranking_why") or ""
+        reasons = "; ".join(str(r) for r in (s.get("reasons") or [])[:3])
+        arts = ", ".join(str(a) for a in (s.get("artifacts") or [])[:4])
         payload = (
             f"id=S{i} cluster={s['id']} items={','.join(str(x) for x in s['item_ids'][:6])}\n"
             f"category={label} covered_by={covered} freshness={s.get('freshness_status') or 'fresh'}\n"
+            f"readiness={float(s.get('readiness') or 0):.2f} quality={float(s.get('quality') or 0):.2f} "
+            f"verdict={s.get('verdict') or 'none'}\n"
+            f"ranking_why={why}\n"
+            f"reasons={reasons or 'none'}\n"
+            f"artifacts={arts or 'none'}\n"
             f"label={s['label']}\n"
             f"summary={s['summary']}"
         )
-        lines.append(fence("STORY", payload, limit=400))
+        lines.append(fence("STORY", payload, limit=700))
     return "\n".join(lines)
 
 
@@ -268,9 +302,13 @@ def _fallback_markdown(
     closer = stories[1:4] if len(stories) > 1 else stories
     parts.append("\n## Worth a closer look\n")
     for s in closer[:3]:
+        why = (s.get("ranking_why") or "").strip() or (
+            f"{s.get('source_count') or 1} source(s), readiness "
+            f"{float(s.get('readiness') or 0):.2f}"
+        )
         parts.append(
             f"- **{truncate(_display_label(s.get('label') or 'Item'), 40)}** — "
-            f"{truncate(s.get('summary') or s.get('label') or '', 120)}"
+            f"{why}. {truncate(s.get('summary') or '', 80)}"
         )
     if len(closer) < 2:
         parts.append("- **Filter** — Relevance and freshness gates are on; muted sources stay out of the brief.")
@@ -280,7 +318,12 @@ def _fallback_markdown(
         parts.append("\n## Ready to build\n")
         for item in ready[:3]:
             decision = item.get("decision") or item.get("verdict") or "spike"
-            parts.append(f"- **{decision}** — {truncate(item.get('title') or '', 140)}")
+            title = truncate(item.get("title") or "", 140)
+            rid = int(item.get("id") or 0)
+            if rid:
+                parts.append(f"- **{decision}** — [{title}](/adapt/{rid}#handoff)")
+            else:
+                parts.append(f"- **{decision}** — {title}")
     parts.append(
         "\n\n---\n*Generated without a language model — install an Ollama chat "
         "model for written analysis.*"

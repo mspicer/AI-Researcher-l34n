@@ -6,7 +6,7 @@
 <article class="story hot">
   <div class="story-head">
     <span class="rank">PLAN</span>
-    <h3>{{ ext_link(brief.url, brief.title) }}</h3>
+    <h3><a href="/read/{{ brief.item_id }}">{{ brief.title }}</a></h3>
   </div>
   {% if brief.excerpt %}
     <p class="why">{{ brief.excerpt }}</p>
@@ -20,6 +20,7 @@
     {% if brief.decision %}<span class="pill lab">{{ brief.decision }}</span>{% endif %}
     <span class="dotsep"></span><span>{{ brief.age }}</span>
     <span class="dotsep"></span><span>{{ brief.model or 'template' }}</span>
+    {% if brief.url %}{{ ext_link(brief.url, "original", "pill") }}{% endif %}
     <a class="pill" href="/adapt">all briefs</a>
   </div>
   {% if brief.artifacts %}
@@ -28,10 +29,24 @@
 </article>
 
 <nav class="chips" style="margin-top:4px">
+  <a class="chip on" href="#handoff">Handoff</a>
   {% for p in brief.pages %}
     <a class="chip {{ 'on' if p.slug=='adapt' }}" href="#{{ p.slug }}">{{ p.title }}</a>
   {% endfor %}
 </nav>
+
+{% if brief.handoff %}
+<section class="panel brief adapt-hero" id="handoff">
+  <h3>
+    <span>Ready to deploy</span>
+    <button type="button" class="btn" data-copy-target="handoff-md">Copy for agent</button>
+  </h3>
+  <div class="body">
+    {{ brief.handoff|markdown|safe }}
+  </div>
+  <textarea id="handoff-md" class="sr-only" readonly>{{ brief.handoff }}</textarea>
+</section>
+{% endif %}
 
 {% for p in brief.pages %}
 <section class="panel brief {{ 'adapt-hero' if p.slug=='adapt' }}" id="{{ p.slug }}">

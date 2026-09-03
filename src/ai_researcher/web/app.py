@@ -21,6 +21,7 @@ from ..progress import RunProgress
 from ..trends import rising_topics, top_entities
 from ..util import iso, local_day, utcnow
 from . import queries as Q
+from .pane import assemble_brief, handoff_markdown
 
 log = logging.getLogger("ai_researcher.web")
 
@@ -170,7 +171,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 request,
                 page="dashboard",
                 day=target_day,
-                brief=Q.get_brief(db, target_day),
+                brief=assemble_brief(db, target_day),
                 stories=stories,
                 fallback_items=fallback_items,
                 rising=rising_topics(db, target_day, limit=14),
@@ -267,10 +268,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         brief = Q.get_research(db, research_id)
         if brief is None:
             raise HTTPException(404, "no such research brief")
+        brief["handoff"] = handoff_markdown(brief)
         return templates.TemplateResponse(
             request,
             "research.html",
             ctx(request, page="adapt", brief=brief),
+        )
+
+    @app.get("/read/{item_id}", response_class=HTMLResponse)
+    async def read_item(request: Request, item_id: int):
+        item = Q.get_item(db, item_id)
+        if item is None:
+            raise HTTPException(404, "no such item")
+        return templates.TemplateResponse(
+            request,
+            "read.html",
+            ctx(request, page="feed", item=item),
+        )
+
+    @app.get("/story/{cluster_id}", response_class=HTMLResponse)
+    async def read_story(request: Request, cluster_id: int):
+        story = Q.get_story(db, cluster_id)
+        if story is None:
+            raise HTTPException(404, "no such story")
+        return templates.TemplateResponse(
+            request,
+            "story.html",
+            ctx(request, page="dashboard", story=story),
         )
 
     # ── json api ─────────────────────────────────────────────────────

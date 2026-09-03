@@ -33,6 +33,7 @@ ITEM_SELECT = """
            COALESCE(j.readiness, 0)    AS readiness,
            COALESCE(j.verdict, '')     AS verdict,
            COALESCE(j.artifacts, '[]') AS artifacts,
+           COALESCE(j.reasons, '[]')   AS reasons,
            COALESCE(r.id, 0)           AS research_id,
            COALESCE(r.decision, '')    AS research_decision,
            COALESCE(s.name, i.source_key) AS source_name,
@@ -71,6 +72,7 @@ def _shape_item(row, now=None) -> dict[str, Any]:
         "readiness": round(float(row["readiness"] or 0), 2),
         "verdict": row["verdict"] or "",
         "artifacts": sanitize_artifacts(jload(row["artifacts"], [])),
+        "reasons": jload(row["reasons"], []) if "reasons" in row.keys() else [],
         "research_id": int(row["research_id"] or 0),
         "research_decision": row["research_decision"] or "",
         "source_key": row["source_key"],
@@ -139,6 +141,7 @@ def _rollup_judgment(items: list[dict[str, Any]]) -> dict[str, Any]:
             "quality": 0.0, "practicality": 0.0, "feasibility": 0.0,
             "usefulness": 0.0, "readiness": 0.0, "verdict": "",
             "research_id": 0, "research_decision": "", "artifacts": [],
+            "reasons": [],
         }
     scored = [i for i in items if i.get("readiness")]
     best = max(
@@ -168,6 +171,68 @@ def _rollup_judgment(items: list[dict[str, Any]]) -> dict[str, Any]:
         "research_id": carrier["research_id"],
         "research_decision": carrier["research_decision"],
         "artifacts": artifacts[:8],
+        "reasons": list(best.get("reasons") or [])[:4],
+    }
+
+
+def body_as_markdown(body: str) -> str:
+    """Turn a stored feed body into markdown the reader can render cleanly."""
+    text = (body or "").strip()
+    if not text:
+        return ""
+    if re.search(r"(?m)^#{1,3} |\n[-*] |\n\d+\. ", text):
+        return text
+    paragraphs = re.split(r"\n\s*\n", text)
+    return "\n\n".join(" ".join(part.split()) for part in paragraphs if part.strip())
+
+
+CLUSTER_SELECT = """
+    SELECT c.id, c.label, c.summary, c.category, c.score, c.size,
+           c.source_count, c.entities, c.first_seen, c.last_seen,
+           COALESCE(c.freshness_status, 'fresh') AS freshness_status,
+           COALESCE(c.stale, 0) AS stale,
+           COALESCE(c.ranking_why, '') AS ranking_why,
+           COALESCE(c.confidence, 0) AS confidence
+    FROM clusters c
+"""
+
+
+def _assemble_story(db: Database, row, now) -> dict[str, Any] | None:
+    item_rows = db.query(
+        ITEM_SELECT + """
+        JOIN cluster_items ci ON ci.item_id = i.id
+        WHERE ci.cluster_id = ?
+        ORDER BY ci.is_primary DESC, i.engagement DESC,
+                 COALESCE(i.published_at, i.fetched_at) DESC
+        """,
+        (row["id"],),
+    )
+    items = [_shape_item(r, now) for r in item_rows]
+    if not items:
+        return None
+    judged = _rollup_judgment(items)
+    return {
+        "id": row["id"],
+        "label": row["label"],
+        "summary": row["summary"] or items[0]["summary"],
+        "category": row["category"] or "opinion-analysis",
+        "category_label": CATEGORY_LABELS.get(row["category"], "Other"),
+        "score": round(float(row["score"]), 3),
+        "size": row["size"],
+        "source_count": row["source_count"],
+        "entities": jload(row["entities"], []),
+        "age": humanize_age(parse_datetime(row["last_seen"]), now=now),
+        "freshness_status": row["freshness_status"] or "fresh",
+        "stale": bool(row["stale"]),
+        "ranking_why": row["ranking_why"] or "",
+        "confidence": round(float(row["confidence"] or 0), 2),
+        "primary": items[0],
+        "items": items,
+        "others": items[1:],
+        "sources": sorted({i["source_name"] for i in items}),
+        "item_ids": [i["id"] for i in items],
+        **judged,
+        "adapt_excerpt": "",
     }
 
 
@@ -192,14 +257,7 @@ def top_stories(
     # then sort and clip after the gate.
     fetch_limit = limit if not ready else max(limit * 5, 80)
     rows = db.query(
-        f"""
-        SELECT c.id, c.label, c.summary, c.category, c.score, c.size,
-               c.source_count, c.entities, c.first_seen, c.last_seen,
-               COALESCE(c.freshness_status, 'fresh') AS freshness_status,
-               COALESCE(c.stale, 0) AS stale,
-               COALESCE(c.ranking_why, '') AS ranking_why,
-               COALESCE(c.confidence, 0) AS confidence
-        FROM clusters c
+        CLUSTER_SELECT + f"""
         WHERE {' AND '.join(where)}
         ORDER BY c.score DESC
         LIMIT ?
@@ -209,43 +267,12 @@ def top_stories(
 
     stories = []
     for row in rows:
-        item_rows = db.query(
-            ITEM_SELECT + """
-            JOIN cluster_items ci ON ci.item_id = i.id
-            WHERE ci.cluster_id = ?
-            ORDER BY ci.is_primary DESC, i.engagement DESC,
-                     COALESCE(i.published_at, i.fetched_at) DESC
-            """,
-            (row["id"],),
-        )
-        items = [_shape_item(r, now) for r in item_rows]
-        if not items:
+        story = _assemble_story(db, row, now)
+        if not story:
             continue
-        judged = _rollup_judgment(items)
-        if ready and judged["verdict"] not in ("research", "adopt") and not judged["research_id"]:
+        if ready and story["verdict"] not in ("research", "adopt") and not story["research_id"]:
             continue
-        stories.append({
-            "id": row["id"],
-            "label": row["label"],
-            "summary": row["summary"] or items[0]["summary"],
-            "category": row["category"] or "opinion-analysis",
-            "category_label": CATEGORY_LABELS.get(row["category"], "Other"),
-            "score": round(float(row["score"]), 3),
-            "size": row["size"],
-            "source_count": row["source_count"],
-            "entities": jload(row["entities"], []),
-            "age": humanize_age(parse_datetime(row["last_seen"]), now=now),
-            "freshness_status": row["freshness_status"] or "fresh",
-            "stale": bool(row["stale"]),
-            "ranking_why": row["ranking_why"] or "",
-            "confidence": round(float(row["confidence"] or 0), 2),
-            "primary": items[0],
-            "items": items,
-            "others": items[1:],
-            "sources": sorted({i["source_name"] for i in items}),
-            **judged,
-            "adapt_excerpt": "",
-        })
+        stories.append(story)
     if ready:
         stories.sort(
             key=lambda s: (
@@ -273,6 +300,49 @@ def _attach_adapt_excerpts(db: Database, stories: list[dict[str, Any]]) -> None:
     excerpts = {r["research_id"]: adapt_excerpt(r["markdown"]) for r in rows}
     for story in stories:
         story["adapt_excerpt"] = excerpts.get(story.get("research_id") or 0, "")
+
+
+def get_item(db: Database, item_id: int) -> dict[str, Any] | None:
+    """One scraped item for the in-app reader. Body is included here only."""
+    row = db.one(ITEM_SELECT + " WHERE i.id = ?", (item_id,))
+    if row is None:
+        return None
+    now = utcnow()
+    item = _shape_item(row, now)
+    raw = (row["body"] or "").strip()
+    item["body"] = raw
+    item["body_markdown"] = body_as_markdown(raw)
+    cluster = db.one(
+        CLUSTER_SELECT + """
+        JOIN cluster_items ci ON ci.cluster_id = c.id
+        WHERE ci.item_id = ?
+        ORDER BY c.day DESC, ci.is_primary DESC
+        LIMIT 1
+        """,
+        (item_id,),
+    )
+    if cluster:
+        item["cluster_id"] = cluster["id"]
+        item["cluster_label"] = cluster["label"]
+        story = _assemble_story(db, cluster, now)
+        item["related"] = [
+            r for r in (story["items"] if story else []) if r["id"] != item_id
+        ][:8]
+    else:
+        item["cluster_id"] = 0
+        item["cluster_label"] = ""
+        item["related"] = []
+    return item
+
+
+def get_story(db: Database, cluster_id: int) -> dict[str, Any] | None:
+    row = db.one(CLUSTER_SELECT + " WHERE c.id = ?", (cluster_id,))
+    if row is None:
+        return None
+    story = _assemble_story(db, row, utcnow())
+    if story:
+        _attach_adapt_excerpts(db, [story])
+    return story
 
 
 def list_items(

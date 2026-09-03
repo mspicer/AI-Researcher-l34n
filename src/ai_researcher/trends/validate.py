@@ -14,7 +14,7 @@ from typing import Any, Iterable
 
 from ..util import normalize_text, truncate
 
-PROMPT_VERSION = "brief-v3"
+PROMPT_VERSION = "brief-v4"
 HARNESS_VERSION = "validate-v1"
 WORD_LIMIT = 360
 
@@ -363,8 +363,21 @@ def validate_brief(
     )
 
 
+_CITE = re.compile(r"\[S(\d+)\](?!\()")
+
+
 def annotate_citations(markdown: str, stories: list[dict[str, Any]]) -> str:
-    """Leave ``[S1]`` tokens in place; they become source links in the UI."""
+    """Turn bare ``[S1]`` tokens into in-app story links."""
     if not stories or not markdown:
         return markdown
-    return markdown
+    by_n = {i: s for i, s in enumerate(stories, 1)}
+
+    def repl(match: re.Match[str]) -> str:
+        n = int(match.group(1))
+        story = by_n.get(n) or {}
+        cid = story.get("id")
+        if not cid:
+            return match.group(0)
+        return f"[S{n}](/story/{int(cid)})"
+
+    return _CITE.sub(repl, markdown)
