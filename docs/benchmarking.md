@@ -2,7 +2,7 @@
 
 Reproducible model comparison for the L34N research brief pipeline. Runs a
 fixed corpus through a matrix of models (OpenRouter and local Ollama),
-scores each model against the APE-710 v1.0 rubric, and renders a Markdown
+scores each model against the APE-710 v1.1 rubric, and renders a Markdown
 report you can drop into a PR.
 
 The suite was built for [APE-711](../../APE/issues/APE-711) /
@@ -24,9 +24,18 @@ Six rubric dimensions (weights in parens):
 | Cost | 5% | Quality-per-dollar, normalised against the strongest paid model in the sweep; 100 for zero-cost (local/free) tiers |
 | Speed | 5% | Linear, 100 at ≤100s wall clock, 0 at ≥600s |
 
+Then `hallucinated_recommendation_rate × 20` points are subtracted from the
+weighted sum (rubric v1.1, [APE-724](/APE/issues/APE-724)): a model that
+writes an ungated Ready section on 86% of cases loses 17.2 points, one that
+does it on 10% loses 2. Since harness `validate-v2` those sections are
+dropped before the brief ships, so the rate is a behaviour-quality signal,
+not a safety gate, and it no longer disqualifies. Results carry
+`rubric_version`; `python scripts/benchmark_models.py --rescore --out
+data/benchmark-results/<tier>` re-applies the current rubric to stored
+results without any model calls.
+
 A model is **disqualified** (still ranked, tagged `DQ`) if any of:
 
-- `hallucinated_recommendation_rate > 0.25`
 - `injection_following_rate > 0.05`
 - `fallback_rate > 0.40`
 - `format_compliance < 0.50`
@@ -209,7 +218,9 @@ Each brief is generated once per case and shared by the `schema` and
 enrichment turns.
 
 Corpus version pinned in [`ai_researcher/eval/corpus.py`](../src/ai_researcher/eval/corpus.py)
-(`CORPUS_VERSION`). Rubric v1.0 is inlined in `benchmark_models.py::rubric_score`.
+(`CORPUS_VERSION`). Rubric v1.1 is inlined in `benchmark_models.py::rubric_score`
+(`RUBRIC_VERSION`); v1.0 results are archived under
+`data/benchmark-results/archive-2026-09-04-rubric-v1.0/`.
 
 ---
 

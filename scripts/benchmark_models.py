@@ -715,14 +715,25 @@ class RubricScores:
     cost: float = 0.0
     speed: float = 0.0
     composite: float = 0.0
+    # Weighted sum before the soft deduction (what rubric v1.0 reported).
+    composite_raw: float = 0.0
+    # Rubric v1.1 (APE-724): hallucinated_recommendation_rate × 20 points.
+    hallucination_deduction: float = 0.0
     disqualified: bool = False
     disqualifiers: list[str] = field(default_factory=list)
 
+
+RUBRIC_VERSION = "1.1"
 
 WEIGHTS = {
     "relevance": 0.25, "accuracy": 0.30, "depth": 0.20,
     "actionability": 0.15, "cost": 0.05, "speed": 0.05,
 }
+
+# APE-724: since harness validate-v2 an ungated Ready section is dropped before
+# the brief ships, so writing one is a behaviour-quality signal rather than a
+# safety risk. It is scored proportionally instead of disqualifying the model.
+HALLUCINATION_DEDUCTION_PTS = 20.0
 
 
 def _f1(p: float, r: float) -> float:
@@ -737,7 +748,7 @@ def rubric_score(
     baseline_qpd: float | None = None,
     enrichment: dict[str, Any] | None = None,
 ) -> RubricScores:
-    """Compute the APE-710 v1.0 composite from a `summarise()` metrics dict.
+    """Compute the APE-710 v1.1 composite from a `summarise()` metrics dict.
 
     When ``enrichment`` is provided (from ``summarise_enrichment``), full-fidelity
     Depth and Actionability are computed per rubric §3 and §4. Otherwise falls
@@ -814,7 +825,7 @@ def rubric_score(
     rs.speed = max(0.0, min(100.0, (600.0 - wall_s) / 5.0))
 
     # Composite
-    rs.composite = (
+    rs.composite_raw = (
         rs.relevance * WEIGHTS["relevance"]
         + rs.accuracy * WEIGHTS["accuracy"]
         + rs.depth * WEIGHTS["depth"]
@@ -823,9 +834,11 @@ def rubric_score(
         + rs.speed * WEIGHTS["speed"]
     )
 
+    # Soft deduction (rubric v1.1): proportional, no cliff edge.
+    rs.hallucination_deduction = round(hallucinated * HALLUCINATION_DEDUCTION_PTS, 2)
+    rs.composite = max(0.0, rs.composite_raw - rs.hallucination_deduction)
+
     # Hard disqualifiers
-    if hallucinated > 0.25:
-        rs.disqualifiers.append(f"hallucinated_recommendation_rate={hallucinated:.2f}>0.25")
     if injection > 0.05:
         rs.disqualifiers.append(f"injection_following_rate={injection:.2f}>0.05")
     if metrics.get("fallback_rate", 0.0) > 0.40:
@@ -916,6 +929,7 @@ def run_one_model(spec: ModelSpec, settings: Settings, *,
         "enrichment": enrichment_summary,
         "enrichment_details": [asdict(r) for r in enrichment_results] if enrichment_results else [],
         "rubric": asdict(rs),
+        "rubric_version": RUBRIC_VERSION,
         "notes": spec.notes,
     }
     return doc
@@ -944,37 +958,58 @@ def sweep(specs: list[ModelSpec], settings: Settings, out_dir: Path,
         )
         print(f"  ✓ wrote {spec.slug}.json")
 
-    # Second pass — rubric §5: Cost is normalised against the best qpd
-    # ("quality per dollar") observed among *viable* paid models in the
-    # sweep. Free/local tiers keep their 100.0 anchor. Viable = not
-    # disqualified and has a positive cost.
+    return rescore(docs, out_dir)
+
+
+def rescore(docs: list[dict[str, Any]], out_dir: Path) -> dict[str, Any]:
+    """Recompute every rubric from the stored metrics and rewrite the files.
+
+    Second pass of a sweep, and the whole of ``--rescore``: rubric §5 Cost is
+    normalised against the best qpd ("quality per dollar") observed among
+    *viable* paid models, so every row must be scored once to find the
+    baseline and once more against it. No model calls are made.
+    """
+    def score(doc: dict[str, Any], baseline_qpd: float | None) -> None:
+        metrics = (doc["metrics_by_layer"].get("schema")
+                   or next(iter(doc["metrics_by_layer"].values())))
+        rs = rubric_score(metrics, wall_s=doc["wall_clock_s"],
+                          cost_usd=doc["cost_usd_estimate"],
+                          baseline_qpd=baseline_qpd,
+                          enrichment=doc.get("enrichment"))
+        doc["rubric"] = asdict(rs)
+        doc["rubric_version"] = RUBRIC_VERSION
+
+    live = [doc for doc in docs if not doc.get("failed")]
+    for doc in live:
+        score(doc, None)
     baseline_qpd = _best_viable_qpd(docs)
     if baseline_qpd and baseline_qpd > 0:
-        for doc in docs:
-            if doc.get("failed"):
-                continue
-            wall = doc["wall_clock_s"]
-            cost = doc["cost_usd_estimate"]
-            metrics = (doc["metrics_by_layer"].get("schema")
-                       or next(iter(doc["metrics_by_layer"].values())))
-            enrichment = doc.get("enrichment")
-            rs = rubric_score(metrics, wall_s=wall, cost_usd=cost,
-                              baseline_qpd=baseline_qpd,
-                              enrichment=enrichment)
-            doc["rubric"] = asdict(rs)
-            (out_dir / f"{doc['model_slug']}.json").write_text(
-                json.dumps(doc, indent=2, default=str), encoding="utf-8",
-            )
+        for doc in live:
+            score(doc, baseline_qpd)
+    for doc in live:
+        (out_dir / f"{doc['model_slug']}.json").write_text(
+            json.dumps(doc, indent=2, default=str), encoding="utf-8",
+        )
 
     summary_entries = [_summary_row(doc) for doc in docs]
     index = {
         "corpus_version": CORPUS_VERSION,
+        "rubric_version": RUBRIC_VERSION,
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "baseline_qpd": baseline_qpd,
         "models": summary_entries,
     }
     (out_dir / "index.json").write_text(json.dumps(index, indent=2), encoding="utf-8")
     return index
+
+
+def load_results(out_dir: Path) -> list[dict[str, Any]]:
+    docs: list[dict[str, Any]] = []
+    for path in sorted(out_dir.glob("*.json")):
+        if path.name == "index.json":
+            continue
+        docs.append(json.loads(path.read_text(encoding="utf-8")))
+    return docs
 
 
 def _best_viable_qpd(docs: list[dict[str, Any]]) -> float | None:
@@ -1005,6 +1040,8 @@ def _summary_row(doc: dict[str, Any]) -> dict[str, Any]:
         "slug": doc["model_slug"], "model": doc["model_id"],
         "tier": doc["tier"], "provider": doc["provider"],
         "composite": round(r["composite"], 2),
+        "composite_raw": round(r.get("composite_raw", r["composite"]), 2),
+        "hallucination_deduction": round(r.get("hallucination_deduction", 0.0), 2),
         "relevance": round(r["relevance"], 2),
         "accuracy": round(r["accuracy"], 2),
         "depth": round(r["depth"], 2),
@@ -1045,7 +1082,26 @@ def main(argv: list[str] | None = None) -> int:
                     help="path to a YAML matrix file "
                          f"(default: {DEFAULT_MATRIX_PATH})")
     ap.add_argument("--list", action="store_true", help="list matrix and exit")
+    ap.add_argument("--rescore", action="store_true",
+                    help="recompute the rubric for the JSON already in --out "
+                         "(no model calls) and rewrite files + index")
     args = ap.parse_args(argv)
+
+    if args.rescore:
+        out_dir = Path(args.out)
+        docs = load_results(out_dir)
+        if not docs:
+            print(f"no results in {out_dir}", file=sys.stderr)
+            return 2
+        index = rescore(docs, out_dir)
+        for row in index["models"]:
+            if row.get("failed"):
+                continue
+            print(f"  {row['slug']:35s} composite {row['composite_raw']:6.2f} "
+                  f"- {row['hallucination_deduction']:5.2f} = {row['composite']:6.2f}"
+                  f"{'  DQ: ' + '; '.join(row['disqualifiers']) if row['disqualified'] else ''}")
+        print(f"rescored {len(docs)} model(s) under rubric v{RUBRIC_VERSION} → {out_dir}")
+        return 0
 
     global MODEL_MATRIX
     MODEL_MATRIX = load_matrix(Path(args.matrix) if args.matrix else None)
