@@ -203,12 +203,61 @@ class CallStats:
     wall_s: float = 0.0
 
 
+# ── Production isolation (APE-727) ─────────────────────────────────────────────
+# Settings.load() points ``data_dir`` at the production ``data/`` directory,
+# and every generation that goes through ``ChatRouter`` charges
+# ``consume_daily_budget`` against ``data/model_budget.json`` there. A full
+# sweep is hundreds of generations, enough to exhaust ``AIR_DAILY_MODEL_CALLS``
+# and degrade the production brief to the rules fallback for the rest of the
+# day. Sweep clients therefore run on a private data directory with the daily
+# cap disabled: the only production file a sweep may open is the SQLite corpus
+# the backtest reads, and it never goes through ``Settings.data_dir``.
+
+SWEEP_RUNTIME_DIR = L34N_ROOT / "data" / "benchmark-results" / ".runtime"
+
+
+def isolate_settings(settings: Settings, runtime_dir: Path | None = None) -> Settings:
+    """Point ``settings`` at a sweep-private data directory and lift the daily cap.
+
+    Idempotent: applying it twice leaves the same directory in place. Returns
+    the same object for call-site convenience.
+    """
+    runtime_dir = Path(runtime_dir or SWEEP_RUNTIME_DIR).resolve()
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    settings.data_dir = runtime_dir
+    settings.daily_model_calls = 0
+    return settings
+
+
+def sweep_settings(runtime_dir: Path | None = None) -> Settings:
+    """``Settings.load()`` for a benchmark or backtest run.
+
+    Reads ``.env`` for provider keys and model tags like production, then
+    moves the writable state off the production data directory.
+    """
+    settings = isolate_settings(Settings.load(), runtime_dir)
+    # Ollama host from env / .env
+    if os.environ.get("OLLAMA_HOST"):
+        settings.ollama_host = os.environ["OLLAMA_HOST"].rstrip("/")
+    return settings
+
+
+def _is_isolated(settings: Settings) -> bool:
+    """True when ``settings.data_dir`` is not the production data directory."""
+    production = (Path(os.environ.get("AIR_DATA_DIR") or (L34N_ROOT / "data"))
+                  .expanduser().resolve())
+    return Path(settings.data_dir).resolve() != production
+
+
 class ProviderClient:
     """Thin async wrapper that L34N's harness can drive synchronously."""
 
     def __init__(self, spec: ModelSpec, settings: Settings):
         self.spec = spec
-        self.settings = settings
+        # Never let a sweep client charge the production daily budget, whatever
+        # settings the caller built (APE-727).
+        self.settings = isolate_settings(settings, runtime_dir=settings.data_dir
+                                         if _is_isolated(settings) else None)
         self.stats = CallStats()
         self._loop = asyncio.new_event_loop()
         self._backend: Any = None
@@ -1113,10 +1162,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  {s.slug:35s} {s.tier:5s} {s.provider:10s} {s.model:60s} {price}")
         return 0
 
-    settings = Settings.load()
-    # Ollama host from env / .env
-    if os.environ.get("OLLAMA_HOST"):
-        settings.ollama_host = os.environ["OLLAMA_HOST"].rstrip("/")
+    settings = sweep_settings()
 
     if args.model:
         specs = [s for s in MODEL_MATRIX if s.slug in args.model or s.model in args.model]

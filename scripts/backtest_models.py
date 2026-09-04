@@ -41,7 +41,7 @@ sys.path.insert(0, str(L34N_ROOT / "scripts"))
 
 # Reuse the APE-711 harness: model catalog + client + rubric scoring.
 from benchmark_models import (  # noqa: E402
-    ModelSpec, ProviderClient, _estimate_cost, load_matrix,
+    ModelSpec, ProviderClient, _estimate_cost, load_matrix, sweep_settings,
 )
 from ai_researcher.config import Settings  # noqa: E402
 from ai_researcher.eval.harness import run_case  # noqa: E402
@@ -391,9 +391,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"DB not found at {DB_PATH}", file=sys.stderr)
         return 2
 
-    settings = Settings.load()
-    if os.environ.get("OLLAMA_HOST"):
-        settings.ollama_host = os.environ["OLLAMA_HOST"].rstrip("/")
+    # Sweep-private data dir, daily cap lifted (APE-727). The corpus is still
+    # read straight from the production SQLite file via DB_PATH.
+    settings = sweep_settings()
 
     if args.model:
         specs = [s for s in MODEL_MATRIX if s.slug in args.model or s.model in args.model]

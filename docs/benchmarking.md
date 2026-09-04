@@ -224,6 +224,53 @@ Corpus version pinned in [`ai_researcher/eval/corpus.py`](../src/ai_researcher/e
 
 ---
 
+## Production isolation
+
+The runners read the same `.env` as the live service, so they see the same
+provider keys, Ollama host, and role model tags. They do **not** share its
+writable state ([APE-727](/APE/issues/APE-727)):
+
+- `Settings.data_dir` is moved to `data/benchmark-results/.runtime/` for the
+  life of the sweep (`benchmark_models.sweep_settings()` at start-up, and
+  again inside `ProviderClient` so any caller is covered). Every generation
+  that goes through `ChatRouter` charges `consume_daily_budget` against
+  `<data_dir>/model_budget.json`; with the production directory that was
+  hundreds of calls per sweep against `AIR_DAILY_MODEL_CALLS`, enough to push
+  the live brief onto the rules fallback for the rest of the day.
+- The daily cap is lifted (`daily_model_calls = 0`) on the sweep settings, so
+  a long sweep never silently turns into a run of fallback briefs. Call
+  volume is still recorded per model in `call_stats`.
+- `AIR_DATA_DIR` is honoured for reading `.env` but not as the sweep's data
+  directory; the sweep always writes under the runtime directory.
+- The backtest corpus is still read straight from the production SQLite file
+  (`data/airesearch.db`, read-only queries). That is the only production file
+  a sweep opens.
+
+To confirm on a deployment box, note `data/model_budget.json` before and
+after a one-model run (allow for the hourly ingest timer, which does charge
+it), or run the sweep under an audit hook that reports any open of that
+path:
+
+```bash
+python - <<'EOF'
+import runpy, sys
+from pathlib import Path
+prod = (Path("data") / "model_budget.json").resolve()
+def hook(event, args):
+    if event == "open" and Path(str(args[0])).resolve() == prod:
+        print(f"!! production budget opened: {args}", file=sys.stderr)
+sys.addaudithook(hook)
+sys.argv = ["benchmark_models.py", "--model", "or-gemini-2-5-flash",
+            "--cases", "sum-single-hf", "--out", "data/benchmark-results/scratch"]
+runpy.run_path("scripts/benchmark_models.py", run_name="__main__")
+EOF
+```
+
+`tests/test_sweep_budget_isolation.py` runs one fixture case through the
+runner against a seeded fake production counter and asserts it is unchanged.
+
+---
+
 ## Known gotchas
 
 - **Free-tier OpenRouter slugs churn** — the three `:free` models named in
