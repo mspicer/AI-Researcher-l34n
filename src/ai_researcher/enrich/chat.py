@@ -153,6 +153,11 @@ class OpenAICompatChat:
             return None
         message = (choices[0] or {}).get("message") or {}
         text = (message.get("content") or "").strip()
+        if not text and (choices[0] or {}).get("finish_reason") == "length":
+            # Reasoning models spend max_tokens on hidden thinking and return
+            # nothing; say so instead of silently handing back a fallback.
+            self.last_error = f"{model}: empty content, finish_reason=length (reasoning budget?)"
+            log.warning("OpenRouter generate returned no content: %s", self.last_error)
         return text or None
 
 
