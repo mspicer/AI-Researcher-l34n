@@ -4,6 +4,14 @@ The cleanup pass in ``brief._clean`` strips wrappers. This module decides
 whether what remains is a *valid* briefing: the required shape, no prompt
 echo, no invented Ready-to-build items, and a word budget. A failed
 validation must never become the dashboard's authoritative brief.
+
+Two repairs are applied rather than rejected, because the rest of the brief
+is sound and the repaired text is what ships: trailing commentary past the
+word budget is trimmed, and a ``## Ready to build`` section written on a day
+with no gated items is dropped. Both are recorded as warnings, and the
+dropped section also sets ``hallucinated_ready`` so the benchmark keeps
+measuring the behaviour. A Ready section that names a title that is not
+gated is still an error: a repair cannot tell which bullets are invented.
 """
 
 from __future__ import annotations
@@ -15,7 +23,7 @@ from typing import Any, Iterable
 from ..util import normalize_text, truncate
 
 PROMPT_VERSION = "brief-v4"
-HARNESS_VERSION = "validate-v1"
+HARNESS_VERSION = "validate-v2"
 WORD_LIMIT = 360
 
 REQUIRED_HEADINGS = (
@@ -53,6 +61,9 @@ _REASONING_LEAD = re.compile(
 )
 _HEADING = re.compile(r"^(#{1,3})\s+(.+?)\s*$")
 _BULLET = re.compile(r"^[-*]\s+")
+_NUMBERED = re.compile(r"^\d+[.)]\s+")
+_BOLD_LEAD = re.compile(r"^\*\*[^*\n]+\*\*")
+_BULLET_SECTIONS = {"also today", "worth a closer look", "ready to build"}
 _BOLD_LABEL = re.compile(r"\*\*([^*]+)\*\*")
 _WORD = re.compile(r"\S+")
 
@@ -66,6 +77,11 @@ class ValidationResult:
     word_count: int = 0
     ready_titles: list[str] = field(default_factory=list)
     provenance: dict[str, Any] = field(default_factory=dict)
+    # The model recommended something that was never gated. True both when
+    # the section was dropped (ok) and when it was rejected (not ok).
+    hallucinated_ready: bool = False
+    # An ungated Ready section was removed from ``markdown``.
+    ready_dropped: bool = False
 
     def as_record(self) -> dict[str, Any]:
         return {
@@ -73,6 +89,8 @@ class ValidationResult:
             "errors": self.errors,
             "warnings": self.warnings,
             "word_count": self.word_count,
+            "hallucinated_ready": self.hallucinated_ready,
+            "ready_dropped": self.ready_dropped,
             "prompt_version": PROMPT_VERSION,
             "harness_version": HARNESS_VERSION,
         }
@@ -107,6 +125,50 @@ def split_sections(markdown: str) -> list[tuple[str, str]]:
 
 def bullets_of(body: str) -> list[str]:
     return [ln.strip() for ln in (body or "").splitlines() if _BULLET.match(ln.strip())]
+
+
+def drop_section(markdown: str, title: str) -> str:
+    """Remove every section headed ``title`` (heading and body), keep the rest."""
+    key = _heading_key(title)
+    out: list[str] = []
+    skipping = False
+    for line in (markdown or "").splitlines():
+        match = _HEADING.match(line.strip())
+        if match:
+            skipping = _heading_key(match.group(2)) == key
+        if not skipping:
+            out.append(line)
+    text = "\n".join(out).rstrip()
+    return text + ("\n" if (markdown or "").endswith("\n") else "")
+
+
+def promote_bullets(markdown: str) -> str:
+    """Give the bullet sections their markers back.
+
+    The prompt asks for "**bold label** then one sentence" per bullet, and
+    models regularly render exactly that, one per line, without a leading
+    ``- `` (qwen3:32b does it every time). Numbered lists are the other
+    common variant. The content is complete; only the marker is missing, so
+    add it inside the three bullet sections and nowhere else.
+    """
+    out: list[str] = []
+    in_bullets = False
+    for line in (markdown or "").splitlines():
+        stripped = line.strip()
+        match = _HEADING.match(stripped)
+        if match:
+            in_bullets = _heading_key(match.group(2)) in _BULLET_SECTIONS
+            out.append(line)
+            continue
+        if in_bullets and stripped and not _BULLET.match(stripped):
+            if _NUMBERED.match(stripped):
+                out.append("- " + _NUMBERED.sub("", stripped, count=1))
+                continue
+            if _BOLD_LEAD.match(stripped):
+                out.append("- " + stripped)
+                continue
+        out.append(line)
+    return "\n".join(out) + ("\n" if (markdown or "").endswith("\n") else "")
 
 
 def _title_tokens(text: str) -> set[str]:
@@ -277,7 +339,7 @@ def validate_brief(
     ready = ready or []
     errors: list[str] = []
     warnings: list[str] = []
-    text = (markdown or "").strip()
+    text = promote_bullets((markdown or "").strip())
     if not text:
         return ValidationResult(False, "", errors=["empty briefing"])
 
@@ -310,9 +372,20 @@ def validate_brief(
 
     ready_section = by_key.get("ready to build")
     ready_titles_found: list[str] = []
+    hallucinated_ready = False
+    ready_dropped = False
     allowed_titles = [r.get("title") or "" for r in ready if r.get("title")]
     if ready_section and not allowed_titles:
-        errors.append("Ready to build present but no gated items")
+        # Nothing was gated, so every bullet is invented. The rest of the
+        # brief is unaffected: drop the section, ship the rest, and report
+        # the behaviour through ``hallucinated_ready``.
+        ready_titles_found = extract_ready_labels(ready_section[1])
+        text = drop_section(text, "Ready to build")
+        hallucinated_ready = ready_dropped = True
+        warnings.append(
+            "dropped Ready to build: no gated items"
+            + (f" ({truncate(ready_titles_found[0], 80)})" if ready_titles_found else "")
+        )
     elif ready_section:
         bullets = bullets_of(ready_section[1])
         if strict_counts and not (2 <= len(bullets) <= 3) and allowed_titles:
@@ -327,6 +400,7 @@ def validate_brief(
                 ready_section[1], allowed_titles
             ):
                 errors.append(f"ungated recommendation: {truncate(label, 80)}")
+                hallucinated_ready = True
                 break
         else:
             for label in ready_titles_found:
@@ -335,6 +409,7 @@ def validate_brief(
                     # label is a decision word — accept if the body matches.
                     if not title_matches(ready_section[1], allowed_titles, min_overlap=0.35):
                         errors.append(f"ungated recommendation: {truncate(label, 80)}")
+                        hallucinated_ready = True
                         break
 
     # Lead-in narration that survived cleanup.
@@ -360,6 +435,8 @@ def validate_brief(
         word_count=count,
         ready_titles=ready_titles_found,
         provenance=provenance,
+        hallucinated_ready=hallucinated_ready,
+        ready_dropped=ready_dropped,
     )
 
 
