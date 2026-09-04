@@ -17,6 +17,25 @@
 
   /* ── save / unsave ─────────────────────────────────────────── */
   document.addEventListener("click", function (ev) {
+    var copyBtn = ev.target.closest("[data-copy-target]");
+    if (copyBtn) {
+      ev.preventDefault();
+      var el = document.getElementById(copyBtn.getAttribute("data-copy-target"));
+      if (!el) return;
+      var text = el.value || el.textContent || "";
+      var done = function () { toast("Copied handoff for agent"); };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done).catch(function () {
+          toast("Could not copy");
+        });
+      } else {
+        el.focus();
+        el.select();
+        try { document.execCommand("copy"); done(); }
+        catch (e) { toast("Could not copy"); }
+      }
+      return;
+    }
     var btn = ev.target.closest(".save");
     if (!btn) return;
     ev.preventDefault();

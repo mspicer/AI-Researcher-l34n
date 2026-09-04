@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "macros.html" import badge, verdict_pill, meters, artifact_pills, ext_link %}
+{% from "macros.html" import badge, verdict_pill, meters, artifact_pills %}
 {% block title %}AI Researcher — Adapt{% endblock %}
 
 {% block content %}
@@ -28,7 +28,7 @@
   <article class="story {{ 'hot' if b.decision=='adopt' or b.verdict=='adopt' }}">
     <div class="story-head">
       <span class="rank">{{ loop.index }}</span>
-      <h3><a href="/adapt/{{ b.id }}">{{ b.title }}</a></h3>
+      <h3><a href="/adapt/{{ b.id }}#handoff">{{ b.title }}</a></h3>
     </div>
     {% if b.excerpt %}
       <p class="why">{{ b.excerpt }}</p>
@@ -43,7 +43,7 @@
       <span class="dotsep"></span><span>{{ b.age }}</span>
       {% if b.model %}<span class="dotsep"></span><span>{{ b.model }}</span>
       {% else %}<span class="dotsep"></span><span>template</span>{% endif %}
-      {{ ext_link(b.url, "source", "pill") }}
+      <a class="pill" href="/read/{{ b.item_id }}">source</a>
       {{ artifact_pills(b.artifacts) }}
     </div>
   </article>

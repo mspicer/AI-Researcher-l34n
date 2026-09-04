@@ -54,13 +54,16 @@
 <div class="item">
   <div class="imp {{ 'hi' if item.importance >= 0.7 }}">{{ '%.2f'|format(item.importance) }}</div>
   <div class="main">
-    <h4>{{ ext_link(item.url, item.title) }}</h4>
+    <h4><a href="/read/{{ item.id }}">{{ item.title }}</a></h4>
     {% if item.summary %}<p class="sum">{{ item.summary }}</p>{% endif %}
     {{ meters(item) }}
     <div class="meta">
       {{ badge(item.category, item.category_label) }}
       {{ verdict_pill(item.verdict) }}
       <span class="src">{{ item.source_name }}</span>
+      {% if item.url %}
+        <span class="dotsep"></span>{{ ext_link(item.url, "original") }}
+      {% endif %}
       <span class="dotsep"></span><span>{{ item.age }}</span>
       {% if item.freshness_status and item.freshness_status != 'fresh' %}
         <span class="pill fresh-{{ item.freshness_status }}">{{ item.freshness_status }}</span>
@@ -75,7 +78,7 @@
         <a class="pill" href="/search?q={{ e|urlencode }}">{{ e }}</a>
       {% endfor %}
       {% if item.research_id %}
-        <a class="pill lab" href="/adapt/{{ item.research_id }}">lab notes</a>
+        <a class="pill lab" href="/adapt/{{ item.research_id }}#handoff">lab notes</a>
       {% endif %}
       <button class="fb" data-id="{{ item.id }}" data-kind="useful" title="Mark useful">useful</button>
       <button class="fb" data-id="{{ item.id }}" data-kind="irrelevant" title="Mark irrelevant">hide</button>
@@ -91,7 +94,7 @@
 <article class="story {{ 'hot' if story.source_count >= 3 or story.research_id }} {{ 'stale' if story.stale or story.freshness_status == 'stale' }}" id="story-{{ story.id }}">
   <div class="story-head">
     <span class="rank">{{ rank }}</span>
-    <h3>{{ ext_link(story.primary.url, story.label) }}</h3>
+    <h3><a href="/story/{{ story.id }}">{{ story.label }}</a></h3>
     {{ savebtn(story.primary) }}
   </div>
 
@@ -122,7 +125,7 @@
       <a class="pill" href="/search?q={{ e|urlencode }}">{{ e }}</a>
     {% endfor %}
     {% if story.research_id %}
-      <a class="pill lab" href="/adapt/{{ story.research_id }}">{{ story.research_decision or 'week plan' }} →</a>
+      <a class="pill lab" href="/adapt/{{ story.research_id }}#handoff">{{ story.research_decision or 'week plan' }} →</a>
     {% endif %}
   </div>
 
@@ -132,7 +135,7 @@
     <ul>
       {% for o in story.others %}
       <li>
-        {{ ext_link(o.url, o.title) }}
+        <a href="/read/{{ o.id }}">{{ o.title }}</a>
         <span class="o-src">{{ o.source_name }} · {{ o.age }}</span>
       </li>
       {% endfor %}
