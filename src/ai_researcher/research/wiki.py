@@ -24,7 +24,7 @@ from ..progress import RunProgress
 from ..sanitize import fence
 from ..util import iso, local_day, truncate, utcnow
 from .fallback import render_page
-from .schema import SCHEMA, TURNS, adapt_complete, index_markdown
+from .schema import SCHEMA, TURNS, index_markdown
 
 log = logging.getLogger("ai_researcher.research")
 
@@ -425,8 +425,6 @@ class DeepResearcher:
         if lint_decision != decision:
             # Lint is the last word, but only for a downgrade or a one-step move.
             decision = lint_decision
-        if decision == "adopt" and not adapt_complete(pages.get("adapt", "")):
-            decision = "watch"
 
         verdict = decision_to_verdict(decision, candidate["judgment"]["verdict"])
         scores = parse_scores(pages.get("critique", ""))

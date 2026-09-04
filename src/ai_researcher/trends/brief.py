@@ -21,7 +21,6 @@ from ..sanitize import UNTRUSTED_RULE, fence
 from ..util import iso, local_day, truncate, utcnow
 from ..enrich.ollama import OllamaClient
 from ..enrich.unslop import UNSLOP_RULE, unslop_text
-from ..research.schema import adapt_complete
 from .topics import rising_topics
 from .validate import (
     HARNESS_VERSION,
@@ -117,7 +116,6 @@ def _collect_stories(db: Database, day: str, limit: int = 10) -> list[dict[str, 
             JOIN items i ON i.id = ci.item_id
             LEFT JOIN sources s ON s.key = i.source_key
             WHERE ci.cluster_id = ?
-              AND COALESCE(i.relevant, 1) != 0
             LIMIT 8
             """,
             (row["id"],),
@@ -214,12 +212,7 @@ def _collect_ready(db: Database, limit: int = 5) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for r in rows:
         decision = (r["decision"] or r["verdict"] or "watch").lower()
-        artifacts = jload(r["artifacts"], [])
         if decision not in ("adopt", "spike"):
-            continue
-        if not artifacts:
-            continue
-        if not adapt_complete(r["adapt_markdown"] or ""):
             continue
         out.append({
             "id": r["id"],
@@ -228,7 +221,7 @@ def _collect_ready(db: Database, limit: int = 5) -> list[dict[str, Any]]:
             "decision": decision,
             "verdict": r["verdict"],
             "readiness": r["readiness"],
-            "artifacts": artifacts,
+            "artifacts": jload(r["artifacts"], []),
         })
         if len(out) >= limit:
             break
