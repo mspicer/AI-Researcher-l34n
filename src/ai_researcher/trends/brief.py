@@ -431,6 +431,8 @@ async def generate_brief(
             if checked.ok:
                 markdown = checked.markdown
                 provenance = checked.provenance
+                if checked.warnings:
+                    log.warning("brief repaired: %s", "; ".join(checked.warnings))
             else:
                 validation_errors = list(checked.errors)
                 log.warning("brief validation failed: %s", "; ".join(validation_errors[:8]))

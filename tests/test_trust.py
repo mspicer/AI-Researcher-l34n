@@ -61,13 +61,40 @@ class TestValidateBrief:
         assert not result.ok
         assert any("prompt-echo" in e for e in result.errors)
 
-    def test_rejects_ready_when_nothing_gated(self):
+    def test_drops_ready_when_nothing_gated(self):
         md = _valid_brief(ready="\n## Ready to build\n- **adopt** — Invented tool\n")
         result = validate_brief(md, ready=[], stories=[{"id": 1, "label": "Acme 7B"}])
-        assert not result.ok
-        assert any("no gated" in e for e in result.errors)
+        # A repair, not a rejection: the rest of the brief ships without the section.
+        assert result.ok, result.errors
+        assert result.hallucinated_ready and result.ready_dropped
+        assert any("dropped Ready to build" in w for w in result.warnings)
+        assert "Ready to build" not in result.markdown
+        assert "Invented tool" not in result.markdown
+        assert result.markdown == _valid_brief().rstrip()
+        assert result.ready_titles == ["Invented tool"]
+        assert {s["heading"] for s in result.provenance["sections"]} == {
+            "The one thing", "Also today", "Worth a closer look",
+        }
+
+    def test_dropping_ready_keeps_following_sections(self):
+        md = (
+            "## The one thing\nAcme 7B landed. [S1]\n\n"
+            "## Ready to build\n- **adopt** — Invented tool\n- **spike** — Another one\n\n"
+            "## Also today\n- **A** — x\n- **B** — y\n- **C** — z\n- **D** — w\n\n"
+            "## Worth a closer look\n- **E** — v\n- **F** — u\n"
+        )
+        result = validate_brief(md, ready=[], stories=[{"id": 1, "label": "Acme 7B"}])
+        assert result.ok, result.errors
+        assert result.ready_dropped
+        assert "Ready to build" not in result.markdown
+        assert "Invented tool" not in result.markdown and "Another one" not in result.markdown
+        headings = [h for h, _ in __import__(
+            "ai_researcher.trends.validate", fromlist=["split_sections"]
+        ).split_sections(result.markdown)]
+        assert headings == ["The one thing", "Also today", "Worth a closer look"]
 
     def test_rejects_ungated_recommendation_title(self):
+        # With gated items present, an invented title is an error, not a repair.
         md = _valid_brief(ready="\n## Ready to build\n- **spike** — Totally Fake Product 12B\n")
         result = validate_brief(
             md,
@@ -76,6 +103,8 @@ class TestValidateBrief:
         )
         assert not result.ok
         assert any("ungated" in e for e in result.errors)
+        assert result.hallucinated_ready and not result.ready_dropped
+        assert result.markdown == md
 
     def test_accepts_gated_ready_title(self):
         md = _valid_brief(ready="\n## Ready to build\n- **spike** — vLLM 0.8: run the README server.\n")
@@ -173,10 +202,29 @@ class TestEvalCorpus:
     def test_injection_and_empty_ready_are_rejected(self):
         inject = run_case(case_by_id("inject-direct"), layer="schema")
         assert inject["validate_ok"] is False
-        ready = run_case(case_by_id("ready-empty"), layer="fallback")
-        assert ready["hallucinated_ready"] or ready["fallback"]
         malformed = run_case(case_by_id("malformed-echo"), layer="fallback")
         assert malformed["fallback"] == 1.0
+
+    def test_empty_ready_is_dropped_and_still_measured(self):
+        for layer in ("schema", "fallback"):
+            row = run_case(case_by_id("ready-empty"), layer=layer)
+            assert row["validate_ok"] is True, row["errors"]
+            assert row["fallback"] == 0.0
+            assert row["hallucinated_ready"] == 1.0
+            assert row["ready_dropped"] is True
+            assert row["injection_followed"] == 0.0
+            assert row["pass"] is True
+
+    def test_scored_brief_reports_dropped_ready(self):
+        from ai_researcher.eval.metrics import score_brief_case, summarise
+
+        md = _valid_brief(ready="\n## Ready to build\n- **adopt** — Invented tool\n")
+        row = score_brief_case(md, stories=[{"id": 1, "label": "Acme 7B"}], ready=[])
+        assert row["validate_ok"] is True
+        assert row["format_compliance"] == 1.0
+        assert row["hallucinated_ready"] == 1.0
+        assert row["ready_dropped"] is True
+        assert summarise([row])["hallucinated_recommendation_rate"] == 1.0
 
     def test_valid_shape_passes_schema_layer(self):
         row = run_case(case_by_id("valid-shape"), layer="schema")
