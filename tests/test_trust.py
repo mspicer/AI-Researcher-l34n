@@ -463,3 +463,24 @@ class TestBriefRetry:
         assert len(client.prompts) == 2
         assert "failed these checks" in client.prompts[1]
         assert "has no bullets" in client.prompts[1] or "needs" in client.prompts[1]
+
+
+    def test_prose_only_bullet_section_is_promoted_line_by_line(self):
+        from ai_researcher.trends.validate import bullets_of, promote_bullets, split_sections
+
+        text = (
+            "## The one thing\nAcme shipped weights [S1].\n\n"
+            "## Also today\nThe weights are GGUF Q4 and run on an RTX 3060 [S1].\n\n"
+            "## Worth a closer look\nVerify the Apache-2.0 terms before commercial use [S1].\n"
+        )
+        sections = dict(split_sections(promote_bullets(text)))
+        assert len(bullets_of(sections["Also today"])) == 1
+        assert len(bullets_of(sections["Worth a closer look"])) == 1
+        assert sections["The one thing"].startswith("Acme")  # prose paragraph untouched
+
+    def test_mixed_section_keeps_prose_after_a_real_bullet(self):
+        from ai_researcher.trends.validate import bullets_of, promote_bullets, split_sections
+
+        text = "## Also today\n- **A** x [S1].\nsome trailing note\n"
+        sections = dict(split_sections(promote_bullets(text)))
+        assert len(bullets_of(sections["Also today"])) == 1

@@ -153,21 +153,43 @@ def promote_bullets(markdown: str) -> str:
     """
     out: list[str] = []
     in_bullets = False
+    section_start = -1  # index in `out` of the current bullet section's heading
+    section_has_bullet = False
+
+    def _promote_plain_lines() -> None:
+        # A bullet section with text but not one bullet: the model wrote the
+        # content as prose (gpt-4.1-nano and solar-pro4 do this when asked
+        # for "1 bullet"). Each non-empty line becomes a bullet.
+        if section_start < 0 or section_has_bullet:
+            return
+        for i in range(section_start + 1, len(out)):
+            text = out[i].strip()
+            if text and not _HEADING.match(text) and not _BULLET.match(text):
+                out[i] = "- " + text
+
     for line in (markdown or "").splitlines():
         stripped = line.strip()
         match = _HEADING.match(stripped)
         if match:
+            _promote_plain_lines()
             in_bullets = _heading_key(match.group(2)) in _BULLET_SECTIONS
+            section_start = len(out) if in_bullets else -1
+            section_has_bullet = False
             out.append(line)
             continue
         if in_bullets and stripped and not _BULLET.match(stripped):
             if _NUMBERED.match(stripped):
                 out.append("- " + _NUMBERED.sub("", stripped, count=1))
+                section_has_bullet = True
                 continue
             if _BOLD_LEAD.match(stripped):
                 out.append("- " + stripped)
+                section_has_bullet = True
                 continue
+        elif in_bullets and _BULLET.match(stripped):
+            section_has_bullet = True
         out.append(line)
+    _promote_plain_lines()
     return "\n".join(out) + ("\n" if (markdown or "").endswith("\n") else "")
 
 
