@@ -277,7 +277,39 @@ class ChatRouter:
             self._gemini = GeminiChat(self.settings, api_key=key) if key else None
         return self._gemini
 
-    def _pair(self, premium: bool) -> tuple[Any, str]:
+    def _role_override(self, role: str) -> str:
+        s = self.settings
+        return {
+            "enrich": s.ollama_enrich_model,
+            "judge": s.ollama_judge_model,
+            "research": s.ollama_research_model,
+            "brief": s.ollama_brief_model,
+        }.get(role, "") or ""
+
+    def _ollama_serves(self, tag: str) -> bool:
+        installed = set(getattr(self.ollama, "installed", []) or [])
+        return bool(tag) and (tag in installed or f"{tag}:latest" in installed)
+
+    def _pair(self, premium: bool, role: str = "") -> tuple[Any, str]:
+        """Return ``(backend, model)`` for this band and role.
+
+        A per-role override (``AIR_BRIEF_MODEL`` etc.) names a model, not a
+        backend. If that name is an installed Ollama tag it must go to Ollama
+        even when a cloud key is set; sending ``qwen3:32b`` to OpenRouter is a
+        400 and a silent fallback brief. A cloud slug in the override rides the
+        band's cloud backend as before.
+        """
+        backend, model = self._band_pair(premium)
+        override = self._role_override(role)
+        if not override:
+            return backend, model
+        if self._ollama_serves(override) and backend is not self.ollama:
+            return self.ollama, override
+        if backend is None and (getattr(self.ollama, "chat_model", "") or ""):
+            return self.ollama, override
+        return backend, override
+
+    def _band_pair(self, premium: bool) -> tuple[Any, str]:
         """Return ``(backend, model)`` for this quality band. Deterministic; no last-used state."""
         s = self.settings
         gemini = self._gemini_backend()
@@ -300,16 +332,7 @@ class ChatRouter:
         return None, ""
 
     def model_for(self, *, premium: bool = False, role: str = "") -> str:
-        s = self.settings
-        if role == "enrich" and s.ollama_enrich_model:
-            return s.ollama_enrich_model
-        if role == "judge" and s.ollama_judge_model:
-            return s.ollama_judge_model
-        if role == "research" and s.ollama_research_model:
-            return s.ollama_research_model
-        if role == "brief" and s.ollama_brief_model:
-            return s.ollama_brief_model
-        return self._pair(premium)[1]
+        return self._pair(premium, role)[1]
 
     @property
     def chat_model(self) -> str:
@@ -380,8 +403,8 @@ class ChatRouter:
         model: str | None = None,
         role: str = "",
     ) -> dict[str, Any] | None:
-        backend, use_model = self._pair(premium)
-        use_model = model or self.model_for(premium=premium, role=role) or use_model
+        backend, use_model = self._pair(premium, role)
+        use_model = model or use_model
         if backend is None or not use_model:
             return None
         async with self._gen_gate:
@@ -445,8 +468,8 @@ class ChatRouter:
         model: str | None = None,
         role: str = "",
     ) -> str | None:
-        backend, use_model = self._pair(premium)
-        use_model = model or self.model_for(premium=premium, role=role) or use_model
+        backend, use_model = self._pair(premium, role)
+        use_model = model or use_model
         if backend is None or not use_model:
             return None
         async with self._gen_gate:

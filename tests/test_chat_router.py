@@ -391,3 +391,41 @@ class TestOpenRouterEmpty:
         asyncio.run(http.aclose())
         assert text is None
         assert backend.last_error == "empty OpenRouter response"
+
+
+class TestRoleOverrideBackend:
+    """A role override names a model; the backend follows the model."""
+
+    def test_installed_ollama_tag_stays_on_ollama_when_a_cloud_key_is_set(self, tmp_path):
+        ollama = FakeOllama()
+        openrouter = RecBackend("openrouter")
+        router = ChatRouter(
+            _settings(openrouter_api_key="o", ollama_brief_model="qwen3:4b",
+                      ollama_judge_model="qwen3:4b", data_dir=tmp_path),
+            ollama=ollama,
+            openrouter=openrouter,
+        )
+        asyncio.run(router.probe())
+        assert router.model_for(premium=True, role="brief") == "qwen3:4b"
+        asyncio.run(router.generate_text("brief me", premium=True, role="brief"))
+        asyncio.run(router.generate_json("judge me", premium=False, role="judge"))
+        assert openrouter.calls == []
+        assert ollama.text_calls[0]["model"] == "qwen3:4b"
+        assert ollama.json_calls[0]["model"] == "qwen3:4b"
+        # Roles without an override still ride the cloud band.
+        asyncio.run(router.generate_text("research", premium=True, role="research"))
+        assert openrouter.calls[0]["model"] == "anthropic/claude-sonnet-4"
+
+    def test_cloud_slug_override_rides_the_cloud_backend(self, tmp_path):
+        ollama = FakeOllama()
+        openrouter = RecBackend("openrouter")
+        router = ChatRouter(
+            _settings(openrouter_api_key="o", ollama_brief_model="qwen/qwen3.7-flash",
+                      data_dir=tmp_path),
+            ollama=ollama,
+            openrouter=openrouter,
+        )
+        asyncio.run(router.probe())
+        asyncio.run(router.generate_text("brief me", premium=True, role="brief"))
+        assert ollama.text_calls == []
+        assert openrouter.calls[0]["model"] == "qwen/qwen3.7-flash"
