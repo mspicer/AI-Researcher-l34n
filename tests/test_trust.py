@@ -374,3 +374,92 @@ class TestBulletPromotion:
 
         text = "## Also today\n- **A** x [S1].\n* **B** y [S2].\n"
         assert promote_bullets(text) == text
+
+
+class TestBriefPromptV5:
+    """The prompt is rendered from the data, not a fixed template."""
+
+    def _stories(self, n):
+        return [{"id": i, "label": f"Story {i}", "summary": "s", "category": "model-release",
+                 "source_count": 1, "sources": ["hf"], "item_ids": [i],
+                 "freshness_status": "fresh"} for i in range(1, n + 1)]
+
+    def test_no_ready_items_means_no_ready_section_in_the_template(self):
+        from ai_researcher.trends.brief import render_brief_prompt
+
+        prompt = render_brief_prompt(self._stories(6), rising_text="none", ready=[])
+        assert "## Ready to build" not in prompt
+        assert "Do NOT write" in prompt
+        assert "4-6 bullets" in prompt and "2-3 bullets" in prompt
+
+    def test_gated_items_bring_the_ready_section_back(self):
+        from ai_researcher.trends.brief import render_brief_prompt
+
+        ready = [{"id": 7, "item_id": 3, "decision": "spike", "title": "vLLM v0.8", "readiness": 0.7}]
+        prompt = render_brief_prompt(self._stories(6), rising_text="none", ready=ready)
+        assert "## Ready to build" in prompt and "vLLM v0.8" in prompt
+
+    def test_bullet_counts_follow_the_story_count(self):
+        from ai_researcher.trends.brief import render_brief_prompt
+
+        one = render_brief_prompt(self._stories(1), rising_text="none", ready=[])
+        assert "1 bullet: a second angle" in one and "1 bullet: the one thing" in one
+        three = render_brief_prompt(self._stories(3), rising_text="none", ready=[])
+        assert "2 bullets, one per story" in three
+
+
+class TestBriefRetry:
+    """A validator failure gets one more attempt with the findings fed back."""
+
+    def test_second_attempt_can_rescue_the_brief(self, tmp_path: Path):
+        from ai_researcher.trends.brief import generate_brief
+        from ai_researcher.util import local_day
+
+        db = Database(tmp_path / "t.db")
+        day = local_day()
+        for i in range(1, 7):
+            db.execute(
+                "INSERT INTO items (source_key, external_id, url, canonical_url, url_hash, "
+                "content_hash, title, author, body, published_at, fetched_at, engagement, comments, meta) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                ("lab", f"x{i}", f"https://e.com/{i}", f"https://e.com/{i}", f"h{i}", f"c{i}",
+                 f"Story {i}", "", "body", iso(utcnow()), iso(utcnow()), 0, 0, "{}"),
+            )
+            cur = db.execute(
+                "INSERT INTO clusters (day, label, summary, category, score, size, source_count, "
+                "first_seen, last_seen, entities, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                (day, f"Story {i}", "s", "model-release", 1.0 - i / 10, 1, 1,
+                 iso(utcnow()), iso(utcnow()), "[]", iso(utcnow())),
+            )
+            db.execute("INSERT INTO cluster_items (cluster_id, item_id, is_primary) VALUES (?,?,1)",
+                       (cur.lastrowid, i))
+
+        good = (
+            "## The one thing\nStory 1 matters [S1].\n\n## Also today\n"
+            + "".join(f"- **Story {i} lands** one line [S{i}].\n" for i in range(2, 6))
+            + "\n## Worth a closer look\n- **Story 6 quietly** worth time [S6].\n"
+            "- **Story 2 again** verify it [S2].\n"
+        )
+
+        class Flaky:
+            available = True
+            settings = Settings()
+            replies = ["## The one thing\nStory 1 matters [S1].\n\n## Also today\n\n## Worth a closer look\n" + "x " * 70, good]
+            prompts: list[str] = []
+
+            async def probe(self):
+                return True
+
+            def model_for(self, *, premium=False, role=""):
+                return "stub"
+
+            async def generate_text(self, prompt, **kwargs):
+                self.prompts.append(prompt)
+                return self.replies.pop(0)
+
+        client = Flaky()
+        result = asyncio.run(generate_brief(db, client, day=day, force=True))
+        assert result["fallback"] is False or result["fallback"] == 0
+        assert len(client.prompts) == 2
+        assert "failed these checks" in client.prompts[1]
+        assert "has no bullets" in client.prompts[1] or "needs" in client.prompts[1]

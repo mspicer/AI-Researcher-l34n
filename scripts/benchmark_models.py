@@ -57,6 +57,7 @@ from ai_researcher.trends.brief import (  # noqa: E402
     SYSTEM,
     _render_prompt_stories,
     _render_ready,
+    render_brief_prompt,
 )
 from ai_researcher.sanitize import fence  # noqa: E402
 from ai_researcher.research.schema import SCHEMA, TURNS, adapt_complete  # noqa: E402
@@ -182,14 +183,7 @@ def _case_to_prompt(case: dict[str, Any]) -> str:
         s.setdefault("label", s.get("label") or "item")
 
     ready = case.get("ready") or []
-    rising_fence = fence("RISING", "none", limit=40)
-
-    return PROMPT.format(
-        stories=_render_prompt_stories(stories) if stories
-                else fence("STORY", "none", limit=40),
-        rising=rising_fence,
-        ready=_render_ready(ready),
-    )
+    return render_brief_prompt(stories, rising_text=fence("RISING", "none", limit=40), ready=ready)
 
 
 # ── Provider clients ──────────────────────────────────────────────────────────

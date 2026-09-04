@@ -22,7 +22,7 @@ from typing import Any, Iterable
 
 from ..util import normalize_text, truncate
 
-PROMPT_VERSION = "brief-v4"
+PROMPT_VERSION = "brief-v5"
 HARNESS_VERSION = "validate-v2"
 WORD_LIMIT = 360
 
