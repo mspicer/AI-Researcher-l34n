@@ -68,7 +68,8 @@ def render(docs: list[dict[str, Any]], *, dates: list[str]) -> str:
     lines.append("- `citation_completeness` — fraction of brief sections that cited a source")
     lines.append("- `factuality_score` — derived from format + citation + non-hallucinated ready")
     lines.append("- `prompt_echo_rate` — model regurgitated the prompt")
-    lines.append("- `hallucinated_recommendation_rate` — brief includes an ungated adopt/ready")
+    lines.append("- `hallucinated_recommendation_rate` — model wrote an ungated adopt/ready "
+                 "(dropped before shipping when nothing was gated; fatal otherwise)")
     lines.append("- `fallback_rate` — L34N fell back to the deterministic brief")
     lines.append("")
     lines.append(

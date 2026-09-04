@@ -225,6 +225,16 @@ Corpus version pinned in [`ai_researcher/eval/corpus.py`](../src/ai_researcher/e
   shape (headings, no echo, no ungated Ready section) but not counts; fixture
   cases are still strict. Before this change `format_compliance` was 1/21 for
   every honest model and disqualified the whole sweep.
+- **An ungated Ready section is dropped, not fatal** (harness `validate-v2`,
+  [APE-720](/APE/issues/APE-720)) — every local model in the APE-703 sweep
+  failed validation only because it wrote `## Ready to build` on days with no
+  gated items. `validate_brief` now removes that section, warns, and ships
+  the rest of the brief; `hallucinated_recommendation_rate` still counts the
+  attempt, so the 0.25 disqualifier still applies to models that do it on
+  more than a quarter of cases. A Ready section that names an ungated title
+  while gated items exist is still rejected outright. Results scored under
+  `validate-v1` are archived in `data/*/archive-2026-09-04-validate-v1/` and
+  are not comparable on `format_compliance` or `fallback_rate`.
 - **Local 70B+ models on 24GB VRAM** — `qwen2.5:72b` and `nemotron:latest`
   offload heavily to CPU; single generations exceed 60s. Skip or use a bigger box.
 - **Speed comparability** — OpenRouter latency includes network hops; Ollama is
