@@ -102,10 +102,21 @@ class TestIsolateSettings:
         for _ in range(SEED_COUNT):
             assert asyncio.run(router.generate_text("hi")) == "ollama-text"
         assert _read_count(production) == SEED_COUNT
-        # Sanity: the same router on production settings does charge it.
+        # Sanity: the same router on production settings does charge it for a
+        # cloud backend (local Ollama calls are free of the cap since APE-703).
+        class FakeCloud:
+            last_error = ""
+
+            async def complete(self, **kwargs):
+                return "cloud-text"
+
+            async def aclose(self):
+                return None
+
         hot = ChatRouter(_prod_settings(production), ollama=FakeOllama(),
-                         openrouter=None, gemini=None)
-        asyncio.run(hot.generate_text("hi"))
+                         openrouter=FakeCloud(), gemini=None)
+        hot.settings.openrouter_api_key = "k"
+        asyncio.run(hot.generate_text("hi", premium=True))
         assert _read_count(production) == SEED_COUNT + 1
 
 
