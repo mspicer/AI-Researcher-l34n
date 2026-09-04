@@ -290,3 +290,39 @@ class TestModelBudget:
         assert consume_daily_budget(tmp_path, limit=2) is True
         assert consume_daily_budget(tmp_path, limit=2) is False
         assert consume_daily_budget(tmp_path, limit=0) is True
+
+
+class TestBulletPromotion:
+    """A brief whose bullets lack markers is complete, not malformed."""
+
+    BRIEF = (
+        "## The one thing\n"
+        "**Astra ships** with better benchmarks [S1].\n\n"
+        "## Also today\n"
+        "**Nvidia buys HF** to own the hub [S2].  \n"
+        "**Gemini 3.8 Flash** adds thinking levels [S3].  \n"
+        "**Muse Spark 1.3** trims the decoder [S4].  \n"
+        "**Qwen 3.8 on Cerebras** hits 2k tok/s [S5].\n\n"
+        "## Worth a closer look\n"
+        "1. **Provider outages** all landed at once [S3].\n"
+        "2. **Daybreak fund** names no timeline [S4].\n"
+    )
+
+    def test_bold_lead_and_numbered_lines_count_as_bullets(self):
+        from ai_researcher.trends.validate import bullets_of, promote_bullets, validate_brief
+
+        promoted = promote_bullets(self.BRIEF)
+        assert promoted.count("\n- **") == 6
+        # The one-thing paragraph keeps its bold lead without a marker.
+        assert "\n- **Astra" not in promoted
+        result = validate_brief(self.BRIEF)
+        assert result.ok, result.errors
+        sections = dict(__import__("ai_researcher.trends.validate", fromlist=["split_sections"]).split_sections(result.markdown))
+        assert len(bullets_of(sections["Also today"])) == 4
+        assert len(bullets_of(sections["Worth a closer look"])) == 2
+
+    def test_existing_markers_are_left_alone(self):
+        from ai_researcher.trends.validate import promote_bullets
+
+        text = "## Also today\n- **A** x [S1].\n* **B** y [S2].\n"
+        assert promote_bullets(text) == text

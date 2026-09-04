@@ -53,6 +53,9 @@ _REASONING_LEAD = re.compile(
 )
 _HEADING = re.compile(r"^(#{1,3})\s+(.+?)\s*$")
 _BULLET = re.compile(r"^[-*]\s+")
+_NUMBERED = re.compile(r"^\d+[.)]\s+")
+_BOLD_LEAD = re.compile(r"^\*\*[^*\n]+\*\*")
+_BULLET_SECTIONS = {"also today", "worth a closer look", "ready to build"}
 _BOLD_LABEL = re.compile(r"\*\*([^*]+)\*\*")
 _WORD = re.compile(r"\S+")
 
@@ -107,6 +110,35 @@ def split_sections(markdown: str) -> list[tuple[str, str]]:
 
 def bullets_of(body: str) -> list[str]:
     return [ln.strip() for ln in (body or "").splitlines() if _BULLET.match(ln.strip())]
+
+
+def promote_bullets(markdown: str) -> str:
+    """Give the bullet sections their markers back.
+
+    The prompt asks for "**bold label** then one sentence" per bullet, and
+    models regularly render exactly that, one per line, without a leading
+    ``- `` (qwen3:32b does it every time). Numbered lists are the other
+    common variant. The content is complete; only the marker is missing, so
+    add it inside the three bullet sections and nowhere else.
+    """
+    out: list[str] = []
+    in_bullets = False
+    for line in (markdown or "").splitlines():
+        stripped = line.strip()
+        match = _HEADING.match(stripped)
+        if match:
+            in_bullets = _heading_key(match.group(2)) in _BULLET_SECTIONS
+            out.append(line)
+            continue
+        if in_bullets and stripped and not _BULLET.match(stripped):
+            if _NUMBERED.match(stripped):
+                out.append("- " + _NUMBERED.sub("", stripped, count=1))
+                continue
+            if _BOLD_LEAD.match(stripped):
+                out.append("- " + stripped)
+                continue
+        out.append(line)
+    return "\n".join(out) + ("\n" if (markdown or "").endswith("\n") else "")
 
 
 def _title_tokens(text: str) -> set[str]:
@@ -277,7 +309,7 @@ def validate_brief(
     ready = ready or []
     errors: list[str] = []
     warnings: list[str] = []
-    text = (markdown or "").strip()
+    text = promote_bullets((markdown or "").strip())
     if not text:
         return ValidationResult(False, "", errors=["empty briefing"])
 
