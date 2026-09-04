@@ -193,7 +193,16 @@ scripts/run_benchmark.sh free           # 5 free OpenRouter models (catalog-veri
 for m in ollama-llama31-8b ollama-gemma3-27b ollama-qwen3-32b; do
   python scripts/benchmark_models.py --model $m --out data/benchmark-results/local
 done                                    # the two 70B tags are skipped on 24GB VRAM
+# Backtests write flat into --out, so pass the per-tier directory:
+dates=2026-08-22,2026-08-26,2026-08-30,2026-09-01,2026-09-03
+for tier in paid free local; do
+  python scripts/backtest_models.py --profile $tier --dates $dates --out data/backtest-results/$tier
+done
 ```
+
+The APE-720 re-sweep (harness `validate-v2`) used the same commands and the
+same pinned dates; the chain scripts are kept in
+`data/benchmark-results/ape720-*.sh` with their logs.
 
 Each brief is generated once per case and shared by the `schema` and
 `fallback` layers, so a full 21-case model run is 21 brief calls plus the
