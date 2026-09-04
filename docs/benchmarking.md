@@ -9,6 +9,14 @@ The suite was built for [APE-711](../../APE/issues/APE-711) /
 [APE-713](../../APE/issues/APE-713) but has no hard-coded operator paths —
 clone the repo, install, run.
 
+The current reports (`docs/benchmark-results.md`, `docs/backtest-results.md`)
+were produced on corpus v1.0.0, prompt **brief-v5**, harness **validate-v2**
+with the prose-section repair, rubric v1.1 ([APE-703](/APE/issues/APE-703),
+promoted in [APE-728](/APE/issues/APE-728)). Every result file records its
+`prompt_version`, `harness_version`, and `rubric_version`; the report header
+prints them. Earlier sweeps are kept under dated `archive-*/` directories and
+are not comparable across a prompt or harness change.
+
 ---
 
 ## What gets measured
@@ -190,9 +198,42 @@ full-fidelity vs proxy per-model so cross-comparison stays honest.
 
 ---
 
-## Reproducing the APE-703 numbers
+## Reproducing the current numbers (brief-v5)
 
-The corrected sweep (2026-09-04) that produced the current `docs/benchmark-results.md`:
+The [APE-703](/APE/issues/APE-703) re-sweep (2026-09-04, 17:58–19:20 UTC)
+that produced the current reports ran each tier into a scratch directory, then
+promoted it ([APE-728](/APE/issues/APE-728)):
+
+```bash
+export OPENROUTER_API_KEY=sk-or-...
+dates=2026-08-22,2026-08-26,2026-08-30,2026-09-01,2026-09-03
+python scripts/benchmark_models.py --profile paid --out data/benchmark-results/v5-paid
+python scripts/backtest_models.py  --profile paid --dates $dates --out data/backtest-results/v5-paid
+# Free tier: only the two nemotron slugs answer; the other three 429 into INVALID rows.
+for m in or-nemotron-3-5-lightning-free or-nemotron-3-super-120b-free; do
+  python scripts/benchmark_models.py --model $m --out data/benchmark-results/v5-free
+done
+python scripts/backtest_models.py --model or-nemotron-3-5-lightning-free \
+  --model or-nemotron-3-super-120b-free --dates $dates --out data/backtest-results/v5-free
+# Local tier, one model at a time; check `curl $OLLAMA_HOST/api/ps` shows
+# size_vram == size for the model first, or its speed score is meaningless.
+for m in ollama-llama31-8b ollama-gemma3-27b ollama-qwen3-32b; do
+  python scripts/benchmark_models.py --model $m --out data/benchmark-results/v5-local
+done
+python scripts/backtest_models.py --profile local --dates $dates --out data/backtest-results/v5-local
+# Per-model runs rewrite index.json with only the model just swept, so rebuild it:
+for t in paid free local; do
+  python scripts/benchmark_models.py --rescore --out data/benchmark-results/v5-$t
+done
+# Promote: previous canonical dirs go to archive-2026-09-04-brief-v4/, v5-* rename into place.
+python scripts/benchmark_report.py --in data/benchmark-results/free \
+  --in data/benchmark-results/local --in data/benchmark-results/paid \
+  --out docs/benchmark-results.md
+python scripts/backtest_report.py --out docs/backtest-results.md
+```
+
+The brief-v4 sweep that preceded it (validate-v2, rubric v1.1) is archived
+under `data/*/archive-2026-09-04-brief-v4/`. Its commands, for the record:
 
 
 ```bash
@@ -211,7 +252,8 @@ done
 
 The APE-720 re-sweep (harness `validate-v2`) used the same commands and the
 same pinned dates; the chain scripts are kept in
-`data/benchmark-results/ape720-*.sh` with their logs.
+`data/benchmark-results/ape720-*.sh` with their logs, and the brief-v5 chain
+scripts as `data/benchmark-results/ape728-*.sh`.
 
 Each brief is generated once per case and shared by the `schema` and
 `fallback` layers, so a full 21-case model run is 21 brief calls plus the
@@ -302,6 +344,25 @@ runner against a seeded fake production counter and asserts it is unchanged.
   while gated items exist is still rejected outright. Results scored under
   `validate-v1` are archived in `data/*/archive-2026-09-04-validate-v1/` and
   are not comparable on `format_compliance` or `fallback_rate`.
+- **Per-model runs rewrite `index.json`** — `benchmark_models.py --model X
+  --out DIR` writes `X.json` and then an `index.json` listing only `X`; the
+  same is true of `backtest_models.py`. The report renderers read the
+  per-model files, so the reports are right, but anything that reads
+  `index.json` (rankings scripts, the sweep summary) sees one model. Run
+  `--rescore --out DIR` after a series of per-model benchmark runs to rebuild
+  the index from every file in the directory.
+- **Prose-only single-story sections are repaired, not rejected** (harness
+  `validate-v2` + prose repair, [APE-703](/APE/issues/APE-703)) — when the
+  prompt asks for one bullet and the model answers with a bare sentence,
+  `validate.py::promote_bullets` turns it into the bullet; likewise bold-label
+  lines without `- `. Invented Ready titles are still rejected. Results
+  scored before this repair are archived under
+  `data/*/archive-2026-09-04-brief-v4/` together with the brief-v4 prompt.
+- **Check `size_vram` before a local sweep** — the Ollama box can hold a model
+  only partly in VRAM when another model is resident (`/api/ps` shows
+  `size_vram < size`). Generations then run 5-10× slower and the 5% speed
+  dimension goes to zero. Unload the other model (`keep_alive: 0`) and confirm
+  `size_vram == size` before starting.
 - **Local 70B+ models on 24GB VRAM** — `qwen2.5:72b` and `nemotron:latest`
   offload heavily to CPU; single generations exceed 60s. Skip or use a bigger box.
 - **Speed comparability** — OpenRouter latency includes network hops; Ollama is

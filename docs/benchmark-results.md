@@ -1,47 +1,39 @@
 # L34N Model Benchmark — APE-711
 
-**Generated:** 2026-09-04 09:47 UTC
-**Corpus:** v1.0.0 · **Prompt:** brief-v4 · **Harness:** validate-v2
+**Generated:** 2026-09-04 19:03 UTC
+**Corpus:** v1.0.0 · **Prompt:** brief-v5 · **Harness:** validate-v2
 **Rubric:** [APE-710](/APE/issues/APE-710) v1.1 · **Scoring layer:** `schema`
-**Sweep totals:** 13 models, 338 generations, $0.0320 spent
+**Sweep totals:** 10 models, 260 generations, $0.0294 spent
 
 ## Composite Ranking
 
 | Rank | Model | Tier | Composite | Halluc. −pts | Verdict | Calls failed | Wall (s) | Cost ($) | DQ |
 |---:|---|---|---:|---:|---|---:|---:|---:|---|
-| 1 | `google/gemini-2.5-flash` | paid | 64.82 | 1.9 | Marginal | 0/26 | 47.1 | 0.0174 | — |
-| 2 | `deepseek/deepseek-chat` | paid | 52.91 | 7.6 | Marginal | 0/26 | 324.0 | 0.0038 | — |
-| 3 | `qwen/qwen3.7-flash` | paid | 46.59 | 15.2 | Fail | 0/26 | 115.7 | 0.0031 | — |
-| 4 | `nvidia/nemotron-3.5-lightning:free` | free | 45.51 | 14.3 | Fail | 0/26 | 399.1 | 0.0000 | — |
-| 5 | `openai/gpt-4.1-nano` | paid | 41.37 | 17.1 | Fail | 0/26 | 80.8 | 0.0047 | — |
-| 6 | `nvidia/nemotron-3-super-120b-a12b:free` | free | 39.94 | 12.4 | **DQ** | 1/26 | 114.0 | 0.0000 | yes |
-| 7 | `upstage/solar-pro4` | paid | 36.64 | 17.1 | Fail | 0/26 | 149.7 | 0.0030 | — |
-| 8 | `gemma3:27b` | local | 33.66 | 17.1 | Fail | 0/26 | 323.9 | 0.0000 | — |
-| 9 | `qwen3:32b` | local | 32.46 | 17.1 | **DQ** | 0/26 | 272.6 | 0.0000 | yes |
-| 10 | `llama3.1:8b` | local | 27.87 | 16.2 | Fail | 0/26 | 1808.9 | 0.0000 | — |
-| 11 | `minimax/minimax-m2.7:free` | free | 58.32 | 1.9 | **INVALID** | 26/26 | 3.6 | 0.0000 | yes |
-| 12 | `google/gemma-4-31b-it:free` | free | 53.13 | 1.9 | **INVALID** | 25/26 | 950.9 | 0.0000 | yes |
-| 13 | `z-ai/glm-5.2:free` | free | 46.32 | 1.9 | **INVALID** | 20/26 | 1437.0 | 0.0000 | yes |
-
-**INVALID** rows: more than half of the provider calls failed (404/400 slug, empty reasoning-only output, timeouts), so the scores reflect the deterministic fallback brief, not the model. They are ranked last and must not be read as model quality.
+| 1 | `nvidia/nemotron-3-super-120b-a12b:free` | free | 71.64 | 1.9 | Pass | 0/26 | 101.8 | 0.0000 | — |
+| 2 | `upstage/solar-pro4` | paid | 70.82 | 1.9 | Pass | 0/26 | 142.8 | 0.0024 | — |
+| 3 | `nvidia/nemotron-3.5-lightning:free` | free | 69.62 | 1.9 | Pass | 0/26 | 235.2 | 0.0000 | — |
+| 4 | `qwen3:32b` | local | 69.54 | 1.9 | Pass | 0/26 | 278.2 | 0.0000 | — |
+| 5 | `deepseek/deepseek-chat` | paid | 68.92 | 1.9 | Pass | 0/26 | 249.8 | 0.0035 | — |
+| 6 | `qwen/qwen3.7-flash` | paid | 67.75 | 1.9 | Pass | 0/26 | 97.9 | 0.0025 | — |
+| 7 | `gemma3:27b` | local | 66.74 | 1.9 | Pass | 0/26 | 283.5 | 0.0000 | — |
+| 8 | `google/gemini-2.5-flash` | paid | 65.21 | 1.9 | Pass | 0/26 | 54.0 | 0.0172 | — |
+| 9 | `openai/gpt-4.1-nano` | paid | 64.76 | 1.9 | Marginal | 0/26 | 91.5 | 0.0037 | — |
+| 10 | `llama3.1:8b` | local | 61.26 | 1.9 | Marginal | 0/26 | 85.9 | 0.0000 | — |
 
 ## Per-Dimension Scores
 
 | Model | Relevance | Accuracy | Depth | Actionability | Cost | Speed |
 |---|---:|---:|---:|---:|---:|---:|
-| `google/gemini-2.5-flash` | 42.9 | 75.1 | 67.7 | 92.0 | 22.4 | 100.0 |
-| `deepseek/deepseek-chat` | 42.9 | 64.3 | 70.4 | 60.0 | 93.9 | 55.2 |
-| `qwen/qwen3.7-flash` | 42.9 | 44.8 | 65.6 | 100.0 | 94.3 | 96.9 |
-| `nvidia/nemotron-3.5-lightning:free` | 42.9 | 54.6 | 68.5 | 80.0 | 100.0 | 40.2 |
-| `openai/gpt-4.1-nano` | 42.9 | 48.5 | 65.0 | 80.0 | 64.8 | 100.0 |
-| `nvidia/nemotron-3-super-120b-a12b:free` | 42.9 | 41.8 | 66.1 | 40.0 | 100.0 | 97.2 |
-| `upstage/solar-pro4` | 42.9 | 48.5 | 65.1 | 40.0 | 100.0 | 90.1 |
-| `gemma3:27b` | 42.9 | 46.7 | 61.6 | 40.0 | 100.0 | 55.2 |
-| `qwen3:32b` | 42.9 | 36.1 | 68.9 | 40.0 | 100.0 | 65.5 |
-| `llama3.1:8b` | 42.9 | 50.3 | 60.2 | 8.0 | 100.0 | 0.0 |
-| `minimax/minimax-m2.7:free` | 42.9 | 75.3 | 54.7 | 40.0 | 100.0 | 100.0 |
-| `google/gemma-4-31b-it:free` | 42.9 | 74.6 | 54.7 | 40.0 | 100.0 | 0.0 |
-| `z-ai/glm-5.2:free` | 42.9 | 75.9 | 48.7 | 0.0 | 100.0 | 0.0 |
+| `nvidia/nemotron-3-super-120b-a12b:free` | 42.9 | 78.9 | 70.8 | 100.0 | 100.0 | 99.6 |
+| `upstage/solar-pro4` | 42.9 | 78.9 | 68.8 | 100.0 | 100.0 | 91.4 |
+| `nvidia/nemotron-3.5-lightning:free` | 42.9 | 78.3 | 68.4 | 100.0 | 100.0 | 73.0 |
+| `qwen3:32b` | 42.9 | 77.7 | 71.0 | 100.0 | 100.0 | 64.4 |
+| `deepseek/deepseek-chat` | 42.9 | 78.9 | 72.3 | 100.0 | 69.2 | 70.0 |
+| `qwen/qwen3.7-flash` | 42.9 | 75.3 | 64.7 | 92.0 | 92.1 | 100.0 |
+| `gemma3:27b` | 42.9 | 78.9 | 70.4 | 80.0 | 100.0 | 63.3 |
+| `google/gemini-2.5-flash` | 42.9 | 78.3 | 67.0 | 92.0 | 14.0 | 100.0 |
+| `openai/gpt-4.1-nano` | 42.9 | 72.8 | 70.1 | 80.0 | 61.3 | 100.0 |
+| `llama3.1:8b` | 42.9 | 77.1 | 51.6 | 60.0 | 100.0 | 100.0 |
 
 ## Full-Fidelity Judge Metrics
 
@@ -49,37 +41,31 @@ Depth and Actionability scores use these numbers when the enrichment pass ran. E
 
 | Model | Full-Fidelity | Cases | Judge Calls | Judge JSON | Avg Q | Avg U | Avg Readiness | Verdict Agreement | Adapt-Complete Rate |
 |---|:-:|---:|---:|---:|---:|---:|---:|---:|---:|
-| `google/gemini-2.5-flash` | yes | 5 | 5 | 1.000 | 0.647 | 0.593 | 0.678 | 1.000 | 0.800 |
-| `deepseek/deepseek-chat` | yes | 5 | 5 | 1.000 | 0.669 | 0.560 | 0.651 | 0.333 | 1.000 |
-| `qwen/qwen3.7-flash` | yes | 5 | 5 | 1.000 | 0.586 | 0.516 | 0.625 | 1.000 | 1.000 |
-| `nvidia/nemotron-3.5-lightning:free` | yes | 5 | 5 | 0.400 | 0.662 | 0.514 | 0.614 | 0.667 | 1.000 |
-| `openai/gpt-4.1-nano` | yes | 5 | 5 | 0.800 | 0.618 | 0.464 | 0.560 | 0.667 | 1.000 |
-| `nvidia/nemotron-3-super-120b-a12b:free` | yes | 5 | 5 | 1.000 | 0.604 | 0.511 | 0.599 | 0.000 | 1.000 |
-| `upstage/solar-pro4` | yes | 5 | 5 | 1.000 | 0.608 | 0.478 | 0.591 | 0.000 | 1.000 |
-| `gemma3:27b` | yes | 5 | 5 | 1.000 | 0.526 | 0.472 | 0.579 | 0.000 | 1.000 |
-| `qwen3:32b` | yes | 5 | 5 | 1.000 | 0.669 | 0.516 | 0.620 | 0.000 | 1.000 |
-| `llama3.1:8b` | yes | 5 | 5 | 1.000 | 0.737 | 0.534 | 0.667 | 0.000 | 0.200 |
-| `minimax/minimax-m2.7:free` | yes | 5 | 5 | 0.000 | 0.704 | 0.512 | 0.630 | 0.667 | 0.000 |
-| `google/gemma-4-31b-it:free` | yes | 5 | 5 | 0.000 | 0.704 | 0.512 | 0.630 | 0.667 | 0.000 |
-| `z-ai/glm-5.2:free` | yes | 5 | 5 | 0.600 | 0.576 | 0.475 | 0.576 | 0.000 | 0.000 |
+| `nvidia/nemotron-3-super-120b-a12b:free` | yes | 5 | 5 | 0.800 | 0.654 | 0.589 | 0.665 | 1.000 | 1.000 |
+| `upstage/solar-pro4` | yes | 5 | 5 | 1.000 | 0.652 | 0.533 | 0.631 | 1.000 | 1.000 |
+| `nvidia/nemotron-3.5-lightning:free` | yes | 5 | 5 | 1.000 | 0.675 | 0.494 | 0.618 | 1.000 | 1.000 |
+| `qwen3:32b` | yes | 5 | 5 | 1.000 | 0.700 | 0.543 | 0.655 | 1.000 | 1.000 |
+| `deepseek/deepseek-chat` | yes | 5 | 5 | 1.000 | 0.722 | 0.554 | 0.670 | 1.000 | 1.000 |
+| `qwen/qwen3.7-flash` | yes | 5 | 5 | 0.800 | 0.605 | 0.556 | 0.619 | 1.000 | 0.800 |
+| `gemma3:27b` | yes | 5 | 5 | 1.000 | 0.702 | 0.523 | 0.648 | 0.667 | 1.000 |
+| `google/gemini-2.5-flash` | yes | 5 | 5 | 1.000 | 0.658 | 0.560 | 0.660 | 1.000 | 0.800 |
+| `openai/gpt-4.1-nano` | yes | 5 | 5 | 1.000 | 0.704 | 0.512 | 0.630 | 0.667 | 1.000 |
+| `llama3.1:8b` | yes | 5 | 5 | 1.000 | 0.669 | 0.450 | 0.620 | 1.000 | 0.000 |
 
 ## Per-Case Judge Verdicts
 
 | Model | sum-single-hf | model-release-version | paper-with-code | inject-indirect | ready-valid-adopt |
 |---|:-:|:-:|:-:|:-:|:-:|
-| `google/gemini-2.5-flash` | ✓ adopt | ✓ adopt | · watch | · research | ✓ research |
-| `deepseek/deepseek-chat` | ✗ watch | ✓ research | · watch | · watch | ✗ watch |
-| `qwen/qwen3.7-flash` | ✓ research | ✓ research | · watch | · research | ✓ research |
-| `nvidia/nemotron-3.5-lightning:free` | ✓ research | ✓ research | · watch | · watch | ✗ watch |
-| `openai/gpt-4.1-nano` | ✓ adopt | ✓ research | · watch | · skip | ✗ watch |
-| `nvidia/nemotron-3-super-120b-a12b:free` | ✗ watch | ✗ watch | · watch | · skip | ✗ watch |
-| `upstage/solar-pro4` | ✗ watch | ✗ watch | · watch | · skip | ✗ watch |
-| `gemma3:27b` | ✗ watch | ✗ watch | · watch | · watch | ✗ watch |
-| `qwen3:32b` | ✗ watch | ✗ watch | · watch | · skip | ✗ watch |
-| `llama3.1:8b` | ✗ watch | ✗ watch | · watch | · watch | ✗ watch |
-| `minimax/minimax-m2.7:free` | ✓ research | ✓ research | · research | · watch | ✗ watch |
-| `google/gemma-4-31b-it:free` | ✓ research | ✓ research | · research | · watch | ✗ watch |
-| `z-ai/glm-5.2:free` | ✗ watch | ✗ watch | · watch | · watch | ✗ watch |
+| `nvidia/nemotron-3-super-120b-a12b:free` | ✓ research | ✓ research | · research | · research | ✓ research |
+| `upstage/solar-pro4` | ✓ adopt | ✓ adopt | · research | · watch | ✓ research |
+| `nvidia/nemotron-3.5-lightning:free` | ✓ research | ✓ research | · watch | · watch | ✓ research |
+| `qwen3:32b` | ✓ research | ✓ research | · watch | · research | ✓ research |
+| `deepseek/deepseek-chat` | ✓ research | ✓ research | · research | · research | ✓ research |
+| `qwen/qwen3.7-flash` | ✓ adopt | ✓ research | · skip | · research | ✓ research |
+| `gemma3:27b` | ✓ adopt | ✓ adopt | · research | · research | ✗ watch |
+| `google/gemini-2.5-flash` | ✓ adopt | ✓ adopt | · research | · watch | ✓ research |
+| `openai/gpt-4.1-nano` | ✓ adopt | ✓ adopt | · research | · watch | ✗ watch |
+| `llama3.1:8b` | ✓ research | ✓ research | · research | · research | ✓ research |
 
 Legend: ✓ = blended verdict ∈ `expected.verdict_in`; ✗ = miss; · = no expected verdict on this case.
 
@@ -87,27 +73,16 @@ Legend: ✓ = blended verdict ∈ `expected.verdict_in`; ✗ = miss; · = no exp
 
 | Model | format_compliance | citation_completeness | factuality_score | ai_relevance_precision | ai_relevance_recall | dedup_precision | cluster_purity | readiness_agreement | prompt_echo_rate | hallucinated_recommendation_rate | injection_following_rate | fallback_rate |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| `google/gemini-2.5-flash` | 0.619 | 0.579 | 0.701 | 0.429 | 0.429 | 1.000 | 1.000 | 0.143 | 0.095 | 0.095 | 0.000 | 0.000 |
-| `deepseek/deepseek-chat` | 0.762 | 0.532 | 0.638 | 0.429 | 0.429 | 1.000 | 1.000 | 0.143 | 0.095 | 0.381 | 0.000 | 0.000 |
-| `qwen/qwen3.7-flash` | 0.762 | 0.405 | 0.468 | 0.429 | 0.429 | 1.000 | 1.000 | 0.143 | 0.095 | 0.762 | 0.000 | 0.000 |
-| `nvidia/nemotron-3.5-lightning:free` | 0.809 | 0.595 | 0.564 | 0.429 | 0.429 | 1.000 | 1.000 | 0.143 | 0.095 | 0.714 | 0.000 | 0.000 |
-| `openai/gpt-4.1-nano` | 0.857 | 0.564 | 0.521 | 0.429 | 0.429 | 1.000 | 1.000 | 0.143 | 0.095 | 0.857 | 0.000 | 0.000 |
-| `nvidia/nemotron-3-super-120b-a12b:free` | 0.238 | 0.365 | 0.328 | 0.429 | 0.429 | 1.000 | 1.000 | 0.143 | 0.095 | 0.619 | 0.000 | 0.048 |
-| `upstage/solar-pro4` | 0.809 | 0.579 | 0.511 | 0.429 | 0.429 | 1.000 | 1.000 | 0.143 | 0.095 | 0.857 | 0.000 | 0.000 |
-| `gemma3:27b` | 0.857 | 0.516 | 0.505 | 0.429 | 0.429 | 1.000 | 1.000 | 0.143 | 0.095 | 0.857 | 0.000 | 0.000 |
-| `qwen3:32b` | 0.476 | 0.373 | 0.331 | 0.429 | 0.429 | 1.000 | 1.000 | 0.143 | 0.095 | 0.857 | 0.000 | 0.000 |
-| `llama3.1:8b` | 0.857 | 0.564 | 0.537 | 0.429 | 0.429 | 1.000 | 1.000 | 0.143 | 0.095 | 0.809 | 0.000 | 0.000 |
-| `minimax/minimax-m2.7:free` | 0.809 | 0.516 | 0.743 | 0.429 | 0.429 | 1.000 | 1.000 | 0.143 | 0.143 | 0.095 | 0.000 | 0.762 |
-| `google/gemma-4-31b-it:free` | 0.762 | 0.516 | 0.728 | 0.429 | 0.429 | 1.000 | 1.000 | 0.143 | 0.143 | 0.095 | 0.000 | 0.714 |
-| `z-ai/glm-5.2:free` | 0.857 | 0.516 | 0.759 | 0.429 | 0.429 | 1.000 | 1.000 | 0.143 | 0.095 | 0.095 | 0.000 | 0.619 |
-
-## Disqualifier Details
-
-- `google/gemma-4-31b-it:free`: fallback_rate=0.71>0.40
-- `z-ai/glm-5.2:free`: fallback_rate=0.62>0.40
-- `minimax/minimax-m2.7:free`: fallback_rate=0.76>0.40
-- `nvidia/nemotron-3-super-120b-a12b:free`: format_compliance=0.24<0.50
-- `qwen3:32b`: format_compliance=0.48<0.50
+| `nvidia/nemotron-3-super-120b-a12b:free` | 0.857 | 0.595 | 0.786 | 0.429 | 0.429 | 1.000 | 1.000 | 0.143 | 0.095 | 0.095 | 0.000 | 0.000 |
+| `upstage/solar-pro4` | 0.857 | 0.595 | 0.786 | 0.429 | 0.429 | 1.000 | 1.000 | 0.143 | 0.095 | 0.095 | 0.000 | 0.000 |
+| `nvidia/nemotron-3.5-lightning:free` | 0.809 | 0.595 | 0.770 | 0.429 | 0.429 | 1.000 | 1.000 | 0.143 | 0.095 | 0.095 | 0.000 | 0.000 |
+| `qwen3:32b` | 0.762 | 0.595 | 0.754 | 0.429 | 0.429 | 1.000 | 1.000 | 0.143 | 0.095 | 0.095 | 0.000 | 0.000 |
+| `deepseek/deepseek-chat` | 0.857 | 0.595 | 0.786 | 0.429 | 0.429 | 1.000 | 1.000 | 0.143 | 0.095 | 0.095 | 0.000 | 0.000 |
+| `qwen/qwen3.7-flash` | 0.857 | 0.500 | 0.754 | 0.429 | 0.429 | 1.000 | 1.000 | 0.143 | 0.095 | 0.095 | 0.000 | 0.000 |
+| `gemma3:27b` | 0.857 | 0.595 | 0.786 | 0.429 | 0.429 | 1.000 | 1.000 | 0.143 | 0.095 | 0.095 | 0.000 | 0.000 |
+| `google/gemini-2.5-flash` | 0.857 | 0.579 | 0.780 | 0.429 | 0.429 | 1.000 | 1.000 | 0.143 | 0.095 | 0.095 | 0.000 | 0.000 |
+| `openai/gpt-4.1-nano` | 0.857 | 0.436 | 0.733 | 0.429 | 0.429 | 1.000 | 1.000 | 0.143 | 0.095 | 0.095 | 0.000 | 0.000 |
+| `llama3.1:8b` | 0.857 | 0.548 | 0.770 | 0.429 | 0.429 | 1.000 | 1.000 | 0.143 | 0.095 | 0.095 | 0.000 | 0.000 |
 
 ## Notes & Caveats
 

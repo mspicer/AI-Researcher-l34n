@@ -25,57 +25,48 @@ Sorted by (mean factuality × consistency_score) descending — we want models t
 
 | Model | Tier | Cases | Consistency | Format (μ±σ) | Citation (μ±σ) | Factuality (μ±σ) | Fallback (μ±σ) | Wall (s) | Cost ($) |
 |---|---|---:|---:|---|---|---|---|---:|---:|
-| `deepseek/deepseek-chat` | paid | 5 | **1.000** | 1.00 ± 0.00 | 1.00 ± 0.00 | 1.00 ± 0.00 | 0.00 ± 0.00 | 75.1 | 0.0016 |
-| `google/gemini-2.5-flash` | paid | 5 | **0.941** | 1.00 ± 0.00 | 0.93 ± 0.13 | 0.98 ± 0.04 | 0.00 ± 0.00 | 13.5 | 0.0073 |
-| `google/gemma-4-31b-it:free` | free | 5 | **0.941** | 1.00 ± 0.00 | 0.93 ± 0.13 | 0.98 ± 0.04 | 1.00 ± 0.00 | 189.9 | 0.0000 |
-| `z-ai/glm-5.2:free` | free | 5 | **0.941** | 1.00 ± 0.00 | 0.93 ± 0.13 | 0.98 ± 0.04 | 1.00 ± 0.00 | 317.3 | 0.0000 |
-| `minimax/minimax-m2.7:free` | free | 5 | **0.941** | 1.00 ± 0.00 | 0.93 ± 0.13 | 0.98 ± 0.04 | 1.00 ± 0.00 | 0.7 | 0.0000 |
-| `nvidia/nemotron-3-super-120b-a12b:free` | free | 5 | **0.946** | 1.00 ± 0.00 | 1.00 ± 0.00 | 0.80 ± 0.16 | 0.20 ± 0.40 | 24.9 | 0.0000 |
-| `qwen/qwen3.7-flash` | paid | 5 | **0.956** | 1.00 ± 0.00 | 1.00 ± 0.00 | 0.73 ± 0.13 | 0.00 ± 0.00 | 21.6 | 0.0008 |
-| `qwen3:32b` | local | 5 | **0.956** | 1.00 ± 0.00 | 1.00 ± 0.00 | 0.73 ± 0.13 | 0.00 ± 0.00 | 98.2 | 0.0000 |
-| `llama3.1:8b` | local | 5 | **1.000** | 1.00 ± 0.00 | 1.00 ± 0.00 | 0.67 ± 0.00 | 0.00 ± 0.00 | 605.2 | 0.0000 |
-| `nvidia/nemotron-3.5-lightning:free` | free | 5 | **0.822** | 0.80 ± 0.40 | 1.00 ± 0.00 | 0.73 ± 0.13 | 0.00 ± 0.00 | 73.1 | 0.0000 |
-| `gemma3:27b` | local | 5 | **0.881** | 1.00 ± 0.00 | 0.80 ± 0.27 | 0.60 ± 0.09 | 0.00 ± 0.00 | 110.6 | 0.0000 |
-| `upstage/solar-pro4` | paid | 5 | **0.822** | 0.80 ± 0.40 | 1.00 ± 0.00 | 0.60 ± 0.13 | 0.00 ± 0.00 | 49.9 | 0.0009 |
-| `openai/gpt-4.1-nano` | paid | 5 | **0.782** | 0.60 ± 0.49 | 1.00 ± 0.00 | 0.53 ± 0.16 | 0.00 ± 0.00 | 20.7 | 0.0017 |
+| `deepseek/deepseek-chat` | paid | 5 | **1.000** | 1.00 ± 0.00 | 1.00 ± 0.00 | 1.00 ± 0.00 | 0.00 ± 0.00 | 47.5 | 0.0015 |
+| `upstage/solar-pro4` | paid | 5 | **1.000** | 1.00 ± 0.00 | 1.00 ± 0.00 | 1.00 ± 0.00 | 0.00 ± 0.00 | 23.1 | 0.0008 |
+| `llama3.1:8b` | local | 5 | **1.000** | 1.00 ± 0.00 | 1.00 ± 0.00 | 1.00 ± 0.00 | 0.00 ± 0.00 | 28.8 | 0.0000 |
+| `nvidia/nemotron-3-super-120b-a12b:free` | free | 5 | **1.000** | 1.00 ± 0.00 | 1.00 ± 0.00 | 1.00 ± 0.00 | 0.00 ± 0.00 | 27.9 | 0.0000 |
+| `google/gemini-2.5-flash` | paid | 5 | **0.941** | 1.00 ± 0.00 | 0.93 ± 0.13 | 0.98 ± 0.04 | 0.00 ± 0.00 | 13.2 | 0.0068 |
+| `gemma3:27b` | local | 5 | **0.927** | 1.00 ± 0.00 | 0.87 ± 0.16 | 0.96 ± 0.05 | 0.00 ± 0.00 | 116.1 | 0.0000 |
+| `openai/gpt-4.1-nano` | paid | 5 | **0.822** | 0.80 ± 0.40 | 1.00 ± 0.00 | 0.93 ± 0.13 | 0.00 ± 0.00 | 18.6 | 0.0016 |
+| `qwen/qwen3.7-flash` | paid | 5 | **0.822** | 0.80 ± 0.40 | 1.00 ± 0.00 | 0.93 ± 0.13 | 0.00 ± 0.00 | 16.3 | 0.0007 |
+| `nvidia/nemotron-3.5-lightning:free` | free | 5 | **0.822** | 0.80 ± 0.40 | 1.00 ± 0.00 | 0.93 ± 0.13 | 0.00 ± 0.00 | 103.4 | 0.0000 |
+| `qwen3:32b` | local | 5 | **0.782** | 0.60 ± 0.49 | 1.00 ± 0.00 | 0.87 ± 0.16 | 0.00 ± 0.00 | 92.7 | 0.0000 |
 
 ## Format Compliance — Dates × Models
 
-| Date | deepseek/deepseek-chat | google/gemini-2.5-flash | openai/gpt-4.1-nano | qwen/qwen3.7-flash | upstage/solar-pro4 | gemma3:27b | llama3.1:8b | qwen3:32b | google/gemma-4-31b-it:free | z-ai/glm-5.2:free | minimax/minimax-m2.7:free | nvidia/nemotron-3.5-lightning:free | nvidia/nemotron-3-super-120b-a12b:free |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| 2026-08-22 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 |
-| 2026-08-26 | 1.00 | 1.00 | 0.00 | 1.00 | 0.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 |
-| 2026-08-30 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 0.00 | 1.00 |
-| 2026-09-01 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 |
-| 2026-09-03 | 1.00 | 1.00 | 0.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 |
+| Date | deepseek/deepseek-chat | google/gemini-2.5-flash | openai/gpt-4.1-nano | qwen/qwen3.7-flash | upstage/solar-pro4 | gemma3:27b | llama3.1:8b | qwen3:32b | nvidia/nemotron-3.5-lightning:free | nvidia/nemotron-3-super-120b-a12b:free |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 2026-08-22 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 0.00 | 1.00 | 1.00 |
+| 2026-08-26 | 1.00 | 1.00 | 0.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 |
+| 2026-08-30 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 0.00 | 1.00 |
+| 2026-09-01 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 0.00 | 1.00 | 1.00 |
+| 2026-09-03 | 1.00 | 1.00 | 1.00 | 0.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 |
 
 ## Factuality — Dates × Models
 
-| Date | deepseek/deepseek-chat | google/gemini-2.5-flash | openai/gpt-4.1-nano | qwen/qwen3.7-flash | upstage/solar-pro4 | gemma3:27b | llama3.1:8b | qwen3:32b | google/gemma-4-31b-it:free | z-ai/glm-5.2:free | minimax/minimax-m2.7:free | nvidia/nemotron-3.5-lightning:free | nvidia/nemotron-3-super-120b-a12b:free |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| 2026-08-22 | 1.00 | 1.00 | 0.67 | 0.67 | 0.67 | 0.67 | 0.67 | 0.67 | 1.00 | 1.00 | 1.00 | 1.00 | 0.67 |
-| 2026-08-26 | 1.00 | 1.00 | 0.33 | 0.67 | 0.33 | 0.67 | 0.67 | 0.67 | 1.00 | 1.00 | 1.00 | 0.67 | 0.67 |
-| 2026-08-30 | 1.00 | 1.00 | 0.67 | 0.67 | 0.67 | 0.67 | 0.67 | 0.67 | 0.89 | 0.89 | 0.89 | 0.67 | 1.00 |
-| 2026-09-01 | 1.00 | 0.89 | 0.67 | 0.67 | 0.67 | 0.44 | 0.67 | 0.67 | 1.00 | 1.00 | 1.00 | 0.67 | 0.67 |
-| 2026-09-03 | 1.00 | 1.00 | 0.33 | 1.00 | 0.67 | 0.56 | 0.67 | 1.00 | 1.00 | 1.00 | 1.00 | 0.67 | 1.00 |
+| Date | deepseek/deepseek-chat | google/gemini-2.5-flash | openai/gpt-4.1-nano | qwen/qwen3.7-flash | upstage/solar-pro4 | gemma3:27b | llama3.1:8b | qwen3:32b | nvidia/nemotron-3.5-lightning:free | nvidia/nemotron-3-super-120b-a12b:free |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 2026-08-22 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 0.67 | 1.00 | 1.00 |
+| 2026-08-26 | 1.00 | 1.00 | 0.67 | 1.00 | 1.00 | 0.89 | 1.00 | 1.00 | 1.00 | 1.00 |
+| 2026-08-30 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 0.67 | 1.00 |
+| 2026-09-01 | 1.00 | 0.89 | 1.00 | 1.00 | 1.00 | 0.89 | 1.00 | 0.67 | 1.00 | 1.00 |
+| 2026-09-03 | 1.00 | 1.00 | 1.00 | 0.67 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 |
 
 ## Analysis
 
 - **Highest average factuality**: `deepseek/deepseek-chat` (paid) — μ=1.00, σ=0.00
 - **Most consistent (with factuality ≥ 0.5)**: `deepseek/deepseek-chat` (consistency_score=1.000)
-- **Cheapest paid model this sweep**: `qwen/qwen3.7-flash` — $0.0008 for 5 briefs
-- **Total sweep cost**: $0.0123 across 65 model-date runs, 1600.7s wall time
-
-### Consistency gotchas
-
-- `google/gemma-4-31b-it:free`: fallback fired on **every date** — its apparent consistency reflects the deterministic fallback, not the model. Treat brief outputs as unusable.
-- `z-ai/glm-5.2:free`: fallback fired on **every date** — its apparent consistency reflects the deterministic fallback, not the model. Treat brief outputs as unusable.
-- `minimax/minimax-m2.7:free`: fallback fired on **every date** — its apparent consistency reflects the deterministic fallback, not the model. Treat brief outputs as unusable.
+- **Cheapest paid model this sweep**: `qwen/qwen3.7-flash` — $0.0007 for 5 briefs
+- **Total sweep cost**: $0.0115 across 50 model-date runs, 487.5s wall time
 
 ## Recommendation
 
-- **Primary production pick**: `deepseek/deepseek-chat` (paid). Highest mean factuality × consistency, cost $0.0016 for a 5-day rolling sweep.
-- **Local fallback (zero-cost)**: `qwen3:32b` — factuality μ=0.73, consistency_score=0.956.
+- **Primary production pick**: `deepseek/deepseek-chat` (paid). Highest mean factuality × consistency, cost $0.0015 for a 5-day rolling sweep.
+- **Local fallback (zero-cost)**: `llama3.1:8b` — factuality μ=1.00, consistency_score=1.000.
 - Re-run this backtest weekly (routine or manual trigger) so any silent quality drift shows up as a delta in `consistency_score` or `factuality_score` mean.
 
 ## Caveats
