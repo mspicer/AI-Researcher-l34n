@@ -84,9 +84,12 @@ def score_brief_case(
     ready: list[dict[str, Any]] | None = None,
     expected: dict[str, Any] | None = None,
     used_fallback: bool = False,
+    strict_counts: bool = True,
 ) -> dict[str, Any]:
     expected = expected or {}
-    result = validate_brief(markdown, stories=stories or [], ready=ready or [])
+    result = validate_brief(
+        markdown, stories=stories or [], ready=ready or [], strict_counts=strict_counts,
+    )
     echo = any("prompt-echo" in e for e in result.errors)
     ungated = any("ungated" in e or "no gated" in e for e in result.errors)
     format_ok = 1.0 if result.ok else 0.0

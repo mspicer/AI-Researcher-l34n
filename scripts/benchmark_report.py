@@ -44,9 +44,27 @@ def _fmt(v: Any, decimals: int = 2) -> str:
         return str(v)
 
 
+def _call_failure_rate(doc: dict[str, Any]) -> float | None:
+    rate = doc.get("call_failure_rate")
+    if rate is not None:
+        return float(rate)
+    stats = doc.get("call_stats") or {}
+    calls = stats.get("calls") or 0
+    return (stats.get("failures") or 0) / calls if calls else None
+
+
+def _invalid(doc: dict[str, Any]) -> bool:
+    """A run whose provider calls mostly failed scored the deterministic
+    fallback, not the model. Rank it last and say so."""
+    rate = _call_failure_rate(doc)
+    return rate is not None and rate > 0.5
+
+
 def _dq_badge(doc: dict[str, Any]) -> str:
     if doc.get("failed"):
         return "**FAILED**"
+    if _invalid(doc):
+        return "**INVALID**"
     r = doc.get("rubric") or {}
     if r.get("disqualified"):
         return "**DQ**"
@@ -63,7 +81,10 @@ def _dq_badge(doc: dict[str, Any]) -> str:
 def render(docs: list[dict[str, Any]]) -> str:
     docs_sorted = sorted(
         docs,
-        key=lambda d: -(d.get("rubric") or {}).get("composite", -1) if not d.get("failed") else 999,
+        key=lambda d: (
+            999 if d.get("failed") else
+            (500 if _invalid(d) else 0) - (d.get("rubric") or {}).get("composite", -1)
+        ),
     )
     total_cost = sum(d.get("cost_usd_estimate", 0) or 0 for d in docs if not d.get("failed"))
     total_calls = sum((d.get("call_stats") or {}).get("calls", 0) for d in docs if not d.get("failed"))
@@ -81,22 +102,32 @@ def render(docs: list[dict[str, Any]]) -> str:
     lines.append("")
     lines.append("## Composite Ranking")
     lines.append("")
-    lines.append("| Rank | Model | Tier | Composite | Verdict | Wall (s) | Cost ($) | DQ |")
-    lines.append("|---:|---|---|---:|---|---:|---:|---|")
+    lines.append("| Rank | Model | Tier | Composite | Verdict | Calls failed | Wall (s) | Cost ($) | DQ |")
+    lines.append("|---:|---|---|---:|---|---:|---:|---:|---|")
     rank = 0
     for d in docs_sorted:
         if d.get("failed"):
             continue
         rank += 1
         r = d["rubric"]
+        stats = d.get("call_stats") or {}
+        failed = f"{stats.get('failures', 0)}/{stats.get('calls', 0)}"
         lines.append(
             f"| {rank} | `{d['model_id']}` | {d['tier']} "
             f"| {r['composite']:.2f} | {_dq_badge(d)} "
+            f"| {failed} "
             f"| {d['wall_clock_s']:.1f} "
             f"| {d['cost_usd_estimate']:.4f} "
             f"| {'yes' if r['disqualified'] else '—'} |"
         )
     lines.append("")
+    invalid = [d for d in docs_sorted if _invalid(d) and not d.get("failed")]
+    if invalid:
+        lines.append("**INVALID** rows: more than half of the provider calls failed "
+                     "(404/400 slug, empty reasoning-only output, timeouts), so the "
+                     "scores reflect the deterministic fallback brief, not the model. "
+                     "They are ranked last and must not be read as model quality.")
+        lines.append("")
 
     lines.append("## Per-Dimension Scores")
     lines.append("")

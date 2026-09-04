@@ -10,31 +10,19 @@
 #   input_per_m  USD per 1M input tokens  (omit for local/free tiers)
 #   output_per_m USD per 1M output tokens (omit for local/free tiers)
 #   notes        free-form; shown on failure summaries
+#   reasoning    OpenRouter only; true keeps hidden reasoning on (default off,
+#                because reasoning eats max_tokens and returns empty content)
 #
 # Prices verified against OpenRouter catalog 2026-09-03. Update as the
 # catalog changes.
 
 models:
 
-  # ── Free-tier OpenRouter (APE-711 candidates + substitutes) ─────────────
-  - slug: or-nemotron-super-49b-free
-    provider: openrouter
-    model: nvidia/nemotron-super-49b-v1:free
-    tier: free
-    notes: "APE-711 candidate; slug may 404 depending on OpenRouter catalog"
-
-  - slug: or-llama-3-3-70b-free
-    provider: openrouter
-    model: meta-llama/llama-3.3-70b-instruct:free
-    tier: free
-    notes: "APE-711 candidate; slug may 404"
-
-  - slug: or-gpt-oss-120b-free
-    provider: openrouter
-    model: openai/gpt-oss-120b:free
-    tier: free
-    notes: "APE-711 candidate; slug may 404"
-
+  # ── Free-tier OpenRouter ────────────────────────────────────────────────
+  # Free slugs churn. Verified against the live catalog 2026-09-04; the three
+  # APE-711 candidates (nemotron-super-49b-v1, llama-3.3-70b-instruct,
+  # gpt-oss-120b :free) are gone and were dropped because a 404 sweep scores
+  # as an all-fallback run, not as a model.
   - slug: or-nemotron-3-super-120b-free
     provider: openrouter
     model: nvidia/nemotron-3-super-120b-a12b:free
@@ -46,6 +34,24 @@ models:
     model: z-ai/glm-5.2:free
     tier: free
     notes: "Additional free candidate"
+
+  - slug: or-gemma-4-31b-free
+    provider: openrouter
+    model: google/gemma-4-31b-it:free
+    tier: free
+    notes: "Free Gemma 4 31B; closest free analogue to the local gemma3:27b"
+
+  - slug: or-minimax-m2-7-free
+    provider: openrouter
+    model: minimax/minimax-m2.7:free
+    tier: free
+    notes: "Free MiniMax M2.7"
+
+  - slug: or-nemotron-3-5-lightning-free
+    provider: openrouter
+    model: nvidia/nemotron-3.5-lightning:free
+    tier: free
+    notes: "Small/fast free Nemotron"
 
   # ── Local Ollama ────────────────────────────────────────────────────────
   - slug: ollama-qwen3-32b

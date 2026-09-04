@@ -85,6 +85,10 @@ class ModelSpec:
     input_per_m: float | None = None
     output_per_m: float | None = None
     notes: str = ""
+    # OpenRouter only. Reasoning/thinking models spend `max_tokens` on hidden
+    # reasoning and return empty `content` (finish_reason=length), which the
+    # harness then scores as a fallback. Default off; opt in per model.
+    reasoning: bool = False
 
 
 DEFAULT_MATRIX_PATH = L34N_ROOT / "scripts" / "benchmark_matrix.yaml"
@@ -123,6 +127,7 @@ def load_matrix(path: Path | None = None) -> list[ModelSpec]:
             input_per_m=row.get("input_per_m"),
             output_per_m=row.get("output_per_m"),
             notes=row.get("notes", ""),
+            reasoning=bool(row.get("reasoning", False)),
         ))
     return specs
 
@@ -207,6 +212,11 @@ class ProviderClient:
         self.stats = CallStats()
         self._loop = asyncio.new_event_loop()
         self._backend: Any = None
+        # Brief output per corpus case. run_corpus() re-generates every case
+        # per layer; the schema and fallback layers must judge the *same*
+        # output, and regenerating doubled every sweep's cost and wall time.
+        self._brief_cache: dict[str, str] = {}
+        self.empty_length_hits = 0
         self._init_backend()
 
     def _init_backend(self) -> None:
@@ -245,10 +255,16 @@ class ProviderClient:
     # Sync entry-point invoked by run_corpus's generate closure.
     def generate(self, case: dict[str, Any], *, layer: str = "schema",
                  retry: bool = False) -> str:
-        return self.generate_prompt(
+        key = str(case.get("id"))
+        if not retry and key in self._brief_cache:
+            return self._brief_cache[key]
+        out = self.generate_prompt(
             _case_to_prompt(case), system=SYSTEM, num_predict=900,
             temperature=0.35, tag=f"brief/{case.get('id')}",
         )
+        if not retry:
+            self._brief_cache[key] = out
+        return out
 
     def generate_prompt(
         self, prompt: str, *, system: str = SYSTEM, num_predict: int = 900,
@@ -307,6 +323,8 @@ class ProviderClient:
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
+        if not self.spec.reasoning:
+            body["reasoning"] = {"enabled": False}
         headers = {
             "Authorization": f"Bearer {os.environ['OPENROUTER_API_KEY']}",
             "Content-Type": "application/json",
@@ -343,7 +361,17 @@ class ProviderClient:
         choices = data.get("choices") or []
         if not choices:
             return ""
-        return (choices[0].get("message") or {}).get("content") or ""
+        content = (choices[0].get("message") or {}).get("content") or ""
+        if not content and choices[0].get("finish_reason") == "length":
+            # The whole budget went to hidden reasoning; surface it so the
+            # run is not silently scored as a fallback.
+            self.empty_length_hits += 1
+            reasoning_tokens = ((usage.get("completion_tokens_details") or {})
+                                .get("reasoning_tokens"))
+            print(f"    ! empty content, finish_reason=length "
+                  f"({self.spec.slug}; reasoning_tokens={reasoning_tokens}) — "
+                  f"set `reasoning: false` or raise max_tokens", file=sys.stderr)
+        return content
 
 
 # ── Enrichment pass (full-fidelity Depth + Actionability) ─────────────────────
@@ -878,6 +906,8 @@ def run_one_model(spec: ModelSpec, settings: Settings, *,
         "cases": len(primary_layer["cases"]),
         "wall_clock_s": round(wall_s, 2),
         "call_stats": asdict(stats),
+        "call_failure_rate": round(stats.failures / stats.calls, 4) if stats.calls else None,
+        "empty_length_hits": client.empty_length_hits,
         "cost_usd_estimate": round(cost_usd, 6),
         "metrics_by_layer": {
             layer: entry["metrics"] for layer, entry in result["layers"].items()
