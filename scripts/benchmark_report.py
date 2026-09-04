@@ -203,14 +203,20 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--in", dest="inputs", action="append",
                     default=None, metavar="DIR",
                     help="input dir with per-model JSONs (repeatable)")
-    ap.add_argument("--out",
-                    default="/home/ebg/research-pipeline/docs/benchmark-results.md")
+    # Derive defaults from repo layout instead of hard-coding an operator path.
+    import os
+    l34n_root = Path(os.environ.get("L34N_ROOT",
+                                    Path(__file__).resolve().parent.parent))
+    default_out = l34n_root / "docs" / "benchmark-results.md"
+    default_in = l34n_root / "data" / "benchmark-results"
+    ap.add_argument("--out", default=str(default_out))
     args = ap.parse_args(argv)
 
     dirs = [Path(p) for p in (args.inputs or [
-        "/home/ebg/l34n/data/benchmark-results",
-        "/home/ebg/l34n/data/benchmark-results/local",
-        "/home/ebg/l34n/data/benchmark-results/paid",
+        str(default_in),
+        str(default_in / "free"),
+        str(default_in / "local"),
+        str(default_in / "paid"),
     ])]
     docs = _load_all(dirs)
     if not docs:

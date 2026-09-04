@@ -38,8 +38,12 @@ from pathlib import Path
 from typing import Any, Callable
 
 # ── Path bootstrap ─────────────────────────────────────────────────────────────
+# Derive the repo root from the script location so anyone can clone the repo
+# and run `python scripts/benchmark_models.py` without editing paths. The
+# ``L34N_ROOT`` env var still wins if set (e.g. running the script from a
+# non-standard install location).
 
-L34N_ROOT = Path("/home/ebg/l34n")
+L34N_ROOT = Path(os.environ.get("L34N_ROOT", Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(L34N_ROOT / "src"))
 
 from ai_researcher.config import Settings  # noqa: E402
@@ -75,54 +79,53 @@ class ModelSpec:
     notes: str = ""
 
 
-MODEL_MATRIX: list[ModelSpec] = [
-    # Free-tier OpenRouter (some APE-711 names are outdated; substitutes noted)
-    ModelSpec("or-nemotron-super-49b-free", "openrouter",
-              "nvidia/nemotron-super-49b-v1:free", "free",
-              notes="APE-711 candidate (may not exist; falls back to error)"),
-    ModelSpec("or-llama-3-3-70b-free", "openrouter",
-              "meta-llama/llama-3.3-70b-instruct:free", "free",
-              notes="APE-711 candidate (may not exist)"),
-    ModelSpec("or-gpt-oss-120b-free", "openrouter",
-              "openai/gpt-oss-120b:free", "free",
-              notes="APE-711 candidate (may not exist)"),
-    # Free-tier substitutes discovered in the live OpenRouter catalog
-    ModelSpec("or-nemotron-3-super-120b-free", "openrouter",
-              "nvidia/nemotron-3-super-120b-a12b:free", "free",
-              notes="Substitute for nemotron-super-49b"),
-    ModelSpec("or-glm-5-2-free", "openrouter",
-              "z-ai/glm-5.2:free", "free",
-              notes="Additional free candidate"),
-
-    # Local Ollama — exact and near-matches to APE-711 matrix
-    ModelSpec("ollama-qwen3-32b", "ollama", "qwen3:32b", "local"),
-    ModelSpec("ollama-gemma3-27b", "ollama", "gemma3:27b", "local"),
-    ModelSpec("ollama-qwen25-72b", "ollama", "qwen2.5:72b", "local"),
-    ModelSpec("ollama-nemotron-latest", "ollama", "nemotron:latest", "local",
-              notes="APE-711 asked for nemotron:70b; closest local is :latest"),
-    ModelSpec("ollama-llama31-8b", "ollama", "llama3.1:8b", "local"),
-
-    # Paid OpenRouter (per APE-711)
-    ModelSpec("or-gemini-2-5-flash", "openrouter",
-              "google/gemini-2.5-flash", "paid",
-              input_per_m=0.30, output_per_m=2.50),
-    ModelSpec("or-deepseek-chat", "openrouter",
-              "deepseek/deepseek-chat", "paid",
-              input_per_m=0.14, output_per_m=0.28),
-    ModelSpec("or-solar-pro4", "openrouter",
-              "upstage/solar-pro4", "paid",
-              input_per_m=0.03, output_per_m=0.30),
-    ModelSpec("or-qwen3-7-flash", "openrouter",
-              "qwen/qwen3.7-flash", "paid",
-              input_per_m=0.03, output_per_m=0.30),
-    ModelSpec("or-gpt-4-1-nano", "openrouter",
-              "openai/gpt-4.1-nano", "paid",
-              input_per_m=0.10, output_per_m=0.40),
-]
+DEFAULT_MATRIX_PATH = L34N_ROOT / "scripts" / "benchmark_matrix.yaml"
 
 
-def by_slug(slug: str) -> ModelSpec | None:
-    for s in MODEL_MATRIX:
+def load_matrix(path: Path | None = None) -> list[ModelSpec]:
+    """Load the model matrix from a YAML file.
+
+    Format::
+
+        models:
+          - slug: or-gemini-2-5-flash
+            provider: openrouter
+            model: google/gemini-2.5-flash
+            tier: paid
+            input_per_m: 0.30
+            output_per_m: 2.50
+            notes: ""
+
+    Anyone extending the suite adds/removes rows in the YAML — no code
+    edits required.
+    """
+    import yaml  # pyyaml is a project dep
+    p = Path(path) if path else DEFAULT_MATRIX_PATH
+    if not p.is_file():
+        raise FileNotFoundError(f"matrix file not found: {p}")
+    data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+    rows = data.get("models") or []
+    specs: list[ModelSpec] = []
+    for row in rows:
+        specs.append(ModelSpec(
+            slug=row["slug"],
+            provider=row["provider"],
+            model=row["model"],
+            tier=row["tier"],
+            input_per_m=row.get("input_per_m"),
+            output_per_m=row.get("output_per_m"),
+            notes=row.get("notes", ""),
+        ))
+    return specs
+
+
+# Loaded lazily by the CLI. Kept as a module-global for backwards compat
+# with anything that imported ``MODEL_MATRIX`` directly.
+MODEL_MATRIX: list[ModelSpec] = []
+
+
+def by_slug(slug: str, matrix: list[ModelSpec] | None = None) -> ModelSpec | None:
+    for s in (matrix if matrix is not None else MODEL_MATRIX):
         if s.slug == slug or s.model == slug:
             return s
     return None
@@ -780,13 +783,19 @@ def main(argv: list[str] | None = None) -> int:
                     help="run only this model slug (repeatable). Overrides --profile.")
     ap.add_argument("--cases", default=None,
                     help="comma-sep list of case ids to run (default: all)")
-    ap.add_argument("--out", default="/home/ebg/l34n/data/benchmark-results",
+    ap.add_argument("--out", default=str(L34N_ROOT / "data" / "benchmark-results"),
                     help="output directory")
     ap.add_argument("--brief-only", action="store_true",
                     help="skip the enrichment pass (Critique + Adapt turns); "
                          "Depth/Actionability fall back to proxy scoring")
+    ap.add_argument("--matrix", default=None,
+                    help="path to a YAML matrix file "
+                         f"(default: {DEFAULT_MATRIX_PATH})")
     ap.add_argument("--list", action="store_true", help="list matrix and exit")
     args = ap.parse_args(argv)
+
+    global MODEL_MATRIX
+    MODEL_MATRIX = load_matrix(Path(args.matrix) if args.matrix else None)
 
     if args.list:
         for s in MODEL_MATRIX:
