@@ -181,16 +181,23 @@ full-fidelity vs proxy per-model so cross-comparison stays honest.
 
 ---
 
-## Reproducing the APE-711 / APE-713 numbers
+## Reproducing the APE-703 numbers
 
-The exact sweep that produced the current `docs/benchmark-results.md`:
+The corrected sweep (2026-09-04) that produced the current `docs/benchmark-results.md`:
+
 
 ```bash
 export OPENROUTER_API_KEY=sk-or-...
 scripts/run_benchmark.sh paid           # 5 paid OpenRouter models
-scripts/run_benchmark.sh free           # 5 free OpenRouter models (3 will 404)
-scripts/run_benchmark.sh local          # 5 local Ollama models (2 need >24GB VRAM)
+scripts/run_benchmark.sh free           # 5 free OpenRouter models (catalog-verified)
+for m in ollama-llama31-8b ollama-gemma3-27b ollama-qwen3-32b; do
+  python scripts/benchmark_models.py --model $m --out data/benchmark-results/local
+done                                    # the two 70B tags are skipped on 24GB VRAM
 ```
+
+Each brief is generated once per case and shared by the `schema` and
+`fallback` layers, so a full 21-case model run is 21 brief calls plus the
+enrichment turns.
 
 Corpus version pinned in [`ai_researcher/eval/corpus.py`](../src/ai_researcher/eval/corpus.py)
 (`CORPUS_VERSION`). Rubric v1.0 is inlined in `benchmark_models.py::rubric_score`.
@@ -199,12 +206,26 @@ Corpus version pinned in [`ai_researcher/eval/corpus.py`](../src/ai_researcher/e
 
 ## Known gotchas
 
-- **Free-tier OpenRouter slugs churn** — the three named `:free` models in the
-  bundled matrix returned 404 during APE-711. Refresh the catalog before a fresh sweep.
+- **Free-tier OpenRouter slugs churn** — the three `:free` models named in
+  APE-711 were gone from the catalog by 2026-09-04 and were dropped from the
+  matrix. A 404/400 slug does not score zero; every call fails, the harness
+  ships the deterministic fallback brief, and the row lands mid-table with a
+  respectable-looking composite. The report now tags any row with more than
+  half its calls failed as **INVALID** and ranks it last. Check `Calls failed`
+  before reading a composite.
+- **Reasoning models return empty content** — OpenRouter reasoning/thinking
+  models (qwen3.7-flash and friends) spend the whole `max_tokens` budget on
+  hidden reasoning and answer with `content: ""`, `finish_reason: length`.
+  The runner sends `reasoning: {enabled: false}` by default; set
+  `reasoning: true` on a matrix row to keep thinking on (and raise the budget).
+- **Small corpus cases cannot satisfy the production bullet counts** — 16 of
+  21 cases hand the model one or two stories, while `validate_brief` demands
+  4-6 "Also today" and 2-3 "Worth a closer look" bullets. Live generations
+  with fewer than `LIVE_STRICT_MIN_STORIES` (4) stories are validated for
+  shape (headings, no echo, no ungated Ready section) but not counts; fixture
+  cases are still strict. Before this change `format_compliance` was 1/21 for
+  every honest model and disqualified the whole sweep.
 - **Local 70B+ models on 24GB VRAM** — `qwen2.5:72b` and `nemotron:latest`
   offload heavily to CPU; single generations exceed 60s. Skip or use a bigger box.
 - **Speed comparability** — OpenRouter latency includes network hops; Ollama is
   LAN-only. Don't cross-compare `speed_score` across providers.
-- **`format_compliance` dominates DQ** — the schema-layer validator is strict.
-  Every model in the APE-713 sweep DQ'd on this alone. Track separately from
-  "model quality".
