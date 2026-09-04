@@ -41,8 +41,7 @@ sys.path.insert(0, str(L34N_ROOT / "scripts"))
 
 # Reuse the APE-711 harness: model catalog + client + rubric scoring.
 from benchmark_models import (  # noqa: E402
-    MODEL_MATRIX, ModelSpec, ProviderClient, _estimate_cost,
-    by_slug,
+    ModelSpec, ProviderClient, _estimate_cost, load_matrix,
 )
 from ai_researcher.config import Settings  # noqa: E402
 from ai_researcher.eval.harness import run_case  # noqa: E402
@@ -381,7 +380,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--items-per-date", type=int, default=8,
                     help="max items per dated corpus (default 8)")
     ap.add_argument("--out", default=str(L34N_ROOT / "data" / "backtest-results"))
+    ap.add_argument("--matrix", default=None,
+                    help="path to a YAML model matrix (default: scripts/benchmark_matrix.yaml)")
     args = ap.parse_args(argv)
+    # The matrix is loaded lazily by benchmark_models since APE-713; importing
+    # MODEL_MATRIX gave an empty list and every backtest ran zero models.
+    MODEL_MATRIX = load_matrix(Path(args.matrix) if args.matrix else None)
 
     if not DB_PATH.exists():
         print(f"DB not found at {DB_PATH}", file=sys.stderr)
