@@ -408,7 +408,11 @@ class ChatRouter:
         if backend is None or not use_model:
             return None
         async with self._gen_gate:
-            if not consume_daily_budget(
+            # The daily cap exists to bound cloud spend. Local Ollama calls
+            # cost nothing, and charging them meant an hourly ingest with
+            # enrich/judge/brief on Ollama burned the whole cap by evening and
+            # every later brief was the fallback (APE-703).
+            if backend is not self.ollama and not consume_daily_budget(
                 self.settings.data_dir, limit=int(self.settings.daily_model_calls or 0)
             ):
                 self.last_error = "daily model-call budget exhausted"
@@ -473,7 +477,11 @@ class ChatRouter:
         if backend is None or not use_model:
             return None
         async with self._gen_gate:
-            if not consume_daily_budget(
+            # The daily cap exists to bound cloud spend. Local Ollama calls
+            # cost nothing, and charging them meant an hourly ingest with
+            # enrich/judge/brief on Ollama burned the whole cap by evening and
+            # every later brief was the fallback (APE-703).
+            if backend is not self.ollama and not consume_daily_budget(
                 self.settings.data_dir, limit=int(self.settings.daily_model_calls or 0)
             ):
                 self.last_error = "daily model-call budget exhausted"

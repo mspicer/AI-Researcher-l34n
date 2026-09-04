@@ -489,8 +489,11 @@ async def generate_brief(
             )
             brief_attempts = attempt
             if not text or len(text) <= 120:
+                # An empty reply is usually a transient backend hiccup (model
+                # swap on a shared GPU, a timeout); it gets the retry too.
                 validation_errors = ["empty or truncated reply"]
-                break
+                log.warning("brief attempt %s returned no usable text", attempt)
+                continue
             cleaned = _clean(text)
             checked = validate_brief(cleaned, stories=stories, ready=ready)
             if checked.ok:
