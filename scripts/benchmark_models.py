@@ -61,6 +61,14 @@ from ai_researcher.trends.brief import (  # noqa: E402
 from ai_researcher.sanitize import fence  # noqa: E402
 from ai_researcher.research.schema import SCHEMA, TURNS, adapt_complete  # noqa: E402
 from ai_researcher.research.wiki import parse_scores  # noqa: E402
+from ai_researcher.enrich.judge import (  # noqa: E402
+    PROMPT as JUDGE_PROMPT,
+    SCHEMA as JUDGE_SCHEMA,
+    SYSTEM as JUDGE_SYSTEM,
+    VERDICTS as JUDGE_VERDICTS,
+    blend as judge_blend,
+    judge_text,
+)
 
 # ── Model catalog (APE-711) ────────────────────────────────────────────────────
 
@@ -423,45 +431,180 @@ def _enrichment_prompt(turn_slug: str, case: dict[str, Any],
 @dataclass
 class EnrichmentCaseResult:
     case_id: str
-    quality: float | None = None       # from Critique scores line
+    # Blended judge scores (heuristic prior + candidate-model output, per
+    # enrich/judge.py::blend). One row per corpus case; when a case has
+    # multiple source items we average the blended scores.
+    quality: float | None = None
     usefulness: float | None = None
     practicality: float | None = None
     feasibility: float | None = None
-    critique_ok: bool = False           # scores line parsed
+    readiness: float | None = None
+    verdict: str = ""                    # blended verdict (skip|watch|research|adopt)
+    heuristic_verdict: str = ""          # rule-only verdict for reference
+    model_verdict: str = ""              # raw model verdict before blending
+    verdict_expected: list = field(default_factory=list)
+    verdict_matches: bool = False        # blended verdict ∈ expected.verdict_in
+    judge_calls: int = 0                 # number of candidate-model judge calls
+    judge_json_ok: int = 0               # successful JSON parses from model
+    critique_ok: bool = False            # kept for backwards compatibility
     adapt_complete: bool = False
     adapt_word_count: int = 0
     error: str = ""
 
 
+_JUDGE_JSON_RE = re.compile(r"\{[\s\S]*?\}")
+
+
+def _parse_judge_json(raw: str) -> dict[str, Any] | None:
+    """Extract the first JSON object from a model reply. Tolerant of fenced
+    code blocks and leading prose so a small model that wraps its JSON in
+    markdown does not fail the whole judge pass."""
+    if not raw:
+        return None
+    text = raw.strip()
+    # Strip leading ```json fences the model often adds.
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json|JSON)?\s*", "", text)
+        text = re.sub(r"\s*```\s*$", "", text)
+    # First, try the whole thing.
+    try:
+        obj = json.loads(text)
+        if isinstance(obj, dict):
+            return obj
+    except (ValueError, json.JSONDecodeError):
+        pass
+    # Fallback: scan for the first {…} block that parses.
+    for match in _JUDGE_JSON_RE.finditer(text):
+        try:
+            obj = json.loads(match.group(0))
+            if isinstance(obj, dict):
+                return obj
+        except (ValueError, json.JSONDecodeError):
+            continue
+    return None
+
+
+def _mean(values: list[float]) -> float | None:
+    values = [v for v in values if v is not None]
+    return round(statistics.mean(values), 4) if values else None
+
+
 def run_enrichment_pass(client: "ProviderClient",
                         cases: list[dict[str, Any]]) -> list[EnrichmentCaseResult]:
-    """Run Critique + Adapt turns per case using SCHEMA as system prompt."""
+    """Full-featured Judge + Adapt pass.
+
+    For each research-tier case we:
+
+    1. Compute the heuristic ``judge_text`` prior for every source item.
+    2. Call the candidate model with ``enrich.judge.SYSTEM`` +
+       ``PROMPT`` + ``SCHEMA`` for that item (this is exactly what
+       ``Judge._promote`` does in production).
+    3. Blend the model JSON with the heuristic prior via
+       ``enrich.judge.blend`` — same weights, same verdict brakes.
+    4. Aggregate per-case (average scores, most-severe verdict for
+       multi-source cases) and compare against ``expected.verdict_in``.
+    5. Run the Adapt turn and record ``adapt_complete`` for the
+       actionability metric.
+    """
     results: list[EnrichmentCaseResult] = []
     for case in cases:
         r = EnrichmentCaseResult(case_id=case["id"])
-        pages: dict[str, str] = {}
-        # Turn 1: Critique — extracts Q/P/F/U scores
-        critique_prompt = _enrichment_prompt("critique", case, pages)
-        critique_md = client.generate_prompt(
-            critique_prompt, system=SCHEMA,
-            num_predict=TURN_BY_SLUG["critique"]["num_predict"],
-            temperature=0.2, tag=f"critique/{case['id']}",
-        )
-        if not critique_md:
-            r.error = "critique generation failed"
+        expected = case.get("expected") or {}
+        r.verdict_expected = list(expected.get("verdict_in") or [])
+
+        # Materialise source items — a case may hold `item` or `items`.
+        items_raw = case.get("items") or ([case["item"]] if case.get("item") else [])
+        if not items_raw:
+            r.error = "no items on case"
             results.append(r)
             continue
-        scores = parse_scores(critique_md)
-        if scores:
-            r.quality = scores["quality"]
-            r.usefulness = scores["usefulness"]
-            r.practicality = scores["practicality"]
-            r.feasibility = scores["feasibility"]
-            r.critique_ok = True
-        pages["critique"] = critique_md
 
-        # Turn 2: Adapt — check adapt_complete
-        adapt_prompt = _enrichment_prompt("adapt", case, pages)
+        per_item_blended: list[dict[str, Any]] = []
+        per_item_heuristic: list[dict[str, Any]] = []
+        per_item_model_verdict: list[str] = []
+
+        # Per-source Judge (heuristic + model + blend).
+        for item in items_raw:
+            title = item.get("title") or ""
+            body = item.get("body") or ""
+            source_name = item.get("source") or item.get("kind") or "rss"
+            tier = item.get("tier") or "news"
+            category = (item.get("category")
+                        or (case.get("expected") or {}).get("category")
+                        or "unknown")
+            url = item.get("url") or ""
+
+            heuristic = judge_text(
+                title, body,
+                category=category, tier=tier, url=url,
+                importance=0.5, source_count=len(items_raw),
+            )
+            per_item_heuristic.append(heuristic)
+
+            prompt = JUDGE_PROMPT.format(
+                title=fence("TITLE", title, limit=250),
+                body=fence("BODY", body, limit=900),
+                source=fence("SOURCE", source_name, limit=80),
+                tier=tier,
+                category=category,
+                q=heuristic["quality"], p=heuristic["practicality"],
+                f=heuristic["feasibility"], u=heuristic["usefulness"],
+                r=heuristic["readiness"],
+            )
+            raw = client.generate_prompt(
+                prompt, system=JUDGE_SYSTEM, num_predict=220,
+                temperature=0.2, tag=f"judge/{case['id']}",
+            )
+            r.judge_calls += 1
+            model_payload = _parse_judge_json(raw)
+            if model_payload:
+                r.judge_json_ok += 1
+                per_item_model_verdict.append(str(model_payload.get("verdict") or ""))
+                blended = judge_blend(heuristic, model_payload)
+            else:
+                # Model failed to return usable JSON — fall back to heuristic.
+                blended = dict(heuristic)
+                per_item_model_verdict.append("")
+
+            per_item_blended.append(blended)
+
+        # Aggregate across items: mean scores, worst-case verdict resolution.
+        # For multi-source cases we take the max-severity verdict (adopt >
+        # research > watch > skip) so an "adopt" signal on one item is not
+        # diluted; this matches how the pipeline surfaces the strongest lead.
+        r.quality = _mean([b["quality"] for b in per_item_blended])
+        r.usefulness = _mean([b["usefulness"] for b in per_item_blended])
+        r.practicality = _mean([b["practicality"] for b in per_item_blended])
+        r.feasibility = _mean([b["feasibility"] for b in per_item_blended])
+        r.readiness = _mean([b["readiness"] for b in per_item_blended])
+
+        verdicts = [b["verdict"] for b in per_item_blended if b.get("verdict")]
+        if verdicts:
+            # Highest-severity verdict wins.
+            r.verdict = max(verdicts, key=lambda v: JUDGE_VERDICTS.index(v)
+                             if v in JUDGE_VERDICTS else -1)
+        r.heuristic_verdict = max(
+            (h["verdict"] for h in per_item_heuristic),
+            key=lambda v: JUDGE_VERDICTS.index(v) if v in JUDGE_VERDICTS else -1,
+            default="",
+        )
+        model_verdicts = [v for v in per_item_model_verdict if v]
+        if model_verdicts:
+            r.model_verdict = max(
+                model_verdicts,
+                key=lambda v: JUDGE_VERDICTS.index(v) if v in JUDGE_VERDICTS else -1,
+            )
+
+        # verdict_matches only against cases that supply an allow-list.
+        if r.verdict_expected:
+            r.verdict_matches = r.verdict in r.verdict_expected
+
+        # critique_ok kept for backwards compat with older reports — mark
+        # True when we produced numeric scores for the case at all.
+        r.critique_ok = r.quality is not None
+
+        # Turn 2: Adapt — check adapt_complete for the actionability metric.
+        adapt_prompt = _enrichment_prompt("adapt", case, {})
         adapt_md = client.generate_prompt(
             adapt_prompt, system=SCHEMA,
             num_predict=TURN_BY_SLUG["adapt"]["num_predict"],
@@ -480,32 +623,56 @@ def summarise_enrichment(results: list[EnrichmentCaseResult]) -> dict[str, Any]:
     if not results:
         return {
             "cases": 0, "avg_quality": None, "avg_usefulness": None,
+            "avg_practicality": None, "avg_feasibility": None,
+            "avg_readiness": None,
             "adapt_complete_rate": 0.0, "critique_parse_rate": 0.0,
+            "judge_json_parse_rate": 0.0,
+            "judge_calls": 0,
+            "verdict_agreement": None,
+            "verdict_agreement_cases": 0,
         }
-    critique_scored = [r for r in results if r.critique_ok]
-    parse_rate = len(critique_scored) / len(results)
+    scored = [r for r in results if r.quality is not None]
+    judge_calls_total = sum(r.judge_calls for r in results)
+    judge_ok_total = sum(r.judge_json_ok for r in results)
+
+    # verdict_agreement — fraction of cases with an expected.verdict_in
+    # whose blended verdict landed in that allow-list.
+    verdict_cases = [r for r in results if r.verdict_expected and r.verdict]
+    if verdict_cases:
+        agreement = round(
+            sum(1 for r in verdict_cases if r.verdict_matches) / len(verdict_cases), 4
+        )
+    else:
+        agreement = None
     return {
         "cases": len(results),
         "avg_quality": (
-            round(statistics.mean(r.quality for r in critique_scored), 4)
-            if critique_scored else None
+            round(statistics.mean(r.quality for r in scored), 4) if scored else None
         ),
         "avg_usefulness": (
-            round(statistics.mean(r.usefulness for r in critique_scored), 4)
-            if critique_scored else None
+            round(statistics.mean(r.usefulness for r in scored), 4) if scored else None
         ),
         "avg_practicality": (
-            round(statistics.mean(r.practicality for r in critique_scored), 4)
-            if critique_scored else None
+            round(statistics.mean(r.practicality for r in scored), 4) if scored else None
         ),
         "avg_feasibility": (
-            round(statistics.mean(r.feasibility for r in critique_scored), 4)
-            if critique_scored else None
+            round(statistics.mean(r.feasibility for r in scored), 4) if scored else None
+        ),
+        "avg_readiness": (
+            round(statistics.mean(r.readiness for r in scored), 4) if scored else None
         ),
         "adapt_complete_rate": round(
             sum(1 for r in results if r.adapt_complete) / len(results), 4
         ),
-        "critique_parse_rate": round(parse_rate, 4),
+        "critique_parse_rate": round(
+            sum(1 for r in results if r.critique_ok) / len(results), 4
+        ),
+        "judge_calls": judge_calls_total,
+        "judge_json_parse_rate": (
+            round(judge_ok_total / judge_calls_total, 4) if judge_calls_total else 0.0
+        ),
+        "verdict_agreement": agreement,
+        "verdict_agreement_cases": len(verdict_cases),
     }
 
 
@@ -589,13 +756,21 @@ def rubric_score(
             + (1 - prompt_echo) * 0.15
         ) * 100
 
-    # 4. Actionability — readiness_agreement + adapt_complete_rate (full-fidelity)
-    readiness = metrics.get("readiness_agreement", 0.0)
+    # 4. Actionability — prefer the *blended* judge verdict from the
+    # candidate model (per rubric §4). Falls back to the harness's
+    # heuristic-only readiness_agreement when full-fidelity is off.
+    heuristic_readiness = metrics.get("readiness_agreement", 0.0)
     if enrichment and enrichment.get("cases", 0) > 0:
+        blended_verdict_agreement = enrichment.get("verdict_agreement")
+        readiness = (
+            blended_verdict_agreement
+            if blended_verdict_agreement is not None
+            else heuristic_readiness
+        )
         adapt_rate = enrichment.get("adapt_complete_rate", 0.0)
         rs.actionability = (readiness * 0.60 + adapt_rate * 0.40) * 100
     else:
-        rs.actionability = readiness * 100  # proxy
+        rs.actionability = heuristic_readiness * 100  # proxy
 
     # 5. Cost — normalized against `baseline_qpd` (best qpd across sweep)
     qpd = 0.0 if cost_usd <= 0 else (rs.accuracy + rs.relevance) / cost_usd
@@ -720,7 +895,7 @@ def sweep(specs: list[ModelSpec], settings: Settings, out_dir: Path,
           *, case_ids: list[str] | None = None,
           full_fidelity: bool = True) -> dict[str, Any]:
     out_dir.mkdir(parents=True, exist_ok=True)
-    summary_entries: list[dict[str, Any]] = []
+    docs: list[dict[str, Any]] = []
     for spec in specs:
         try:
             doc = run_one_model(spec, settings, case_ids=case_ids,
@@ -732,19 +907,59 @@ def sweep(specs: list[ModelSpec], settings: Settings, out_dir: Path,
                 "provider": spec.provider, "tier": spec.tier,
                 "failed": True, "error": str(exc)[:400],
             }
-        # Write per-model file
+        docs.append(doc)
+        # Write per-model file eagerly so a crash mid-sweep still leaves data.
         (out_dir / f"{spec.slug}.json").write_text(
             json.dumps(doc, indent=2, default=str), encoding="utf-8",
         )
-        summary_entries.append(_summary_row(doc))
         print(f"  ✓ wrote {spec.slug}.json")
+
+    # Second pass — rubric §5: Cost is normalised against the best qpd
+    # ("quality per dollar") observed among *viable* paid models in the
+    # sweep. Free/local tiers keep their 100.0 anchor. Viable = not
+    # disqualified and has a positive cost.
+    baseline_qpd = _best_viable_qpd(docs)
+    if baseline_qpd and baseline_qpd > 0:
+        for doc in docs:
+            if doc.get("failed"):
+                continue
+            wall = doc["wall_clock_s"]
+            cost = doc["cost_usd_estimate"]
+            metrics = (doc["metrics_by_layer"].get("schema")
+                       or next(iter(doc["metrics_by_layer"].values())))
+            enrichment = doc.get("enrichment")
+            rs = rubric_score(metrics, wall_s=wall, cost_usd=cost,
+                              baseline_qpd=baseline_qpd,
+                              enrichment=enrichment)
+            doc["rubric"] = asdict(rs)
+            (out_dir / f"{doc['model_slug']}.json").write_text(
+                json.dumps(doc, indent=2, default=str), encoding="utf-8",
+            )
+
+    summary_entries = [_summary_row(doc) for doc in docs]
     index = {
         "corpus_version": CORPUS_VERSION,
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "baseline_qpd": baseline_qpd,
         "models": summary_entries,
     }
     (out_dir / "index.json").write_text(json.dumps(index, indent=2), encoding="utf-8")
     return index
+
+
+def _best_viable_qpd(docs: list[dict[str, Any]]) -> float | None:
+    best = 0.0
+    for doc in docs:
+        if doc.get("failed"):
+            continue
+        r = doc.get("rubric") or {}
+        cost = doc.get("cost_usd_estimate", 0.0)
+        if r.get("disqualified") or cost <= 0:
+            continue
+        qpd = (r.get("accuracy", 0.0) + r.get("relevance", 0.0)) / cost
+        if qpd > best:
+            best = qpd
+    return best or None
 
 
 def _summary_row(doc: dict[str, Any]) -> dict[str, Any]:
@@ -755,6 +970,7 @@ def _summary_row(doc: dict[str, Any]) -> dict[str, Any]:
             "failed": True, "error": doc.get("error"),
         }
     r = doc["rubric"]
+    enrichment = doc.get("enrichment") or {}
     return {
         "slug": doc["model_slug"], "model": doc["model_id"],
         "tier": doc["tier"], "provider": doc["provider"],
@@ -770,6 +986,13 @@ def _summary_row(doc: dict[str, Any]) -> dict[str, Any]:
         "disqualified": r["disqualified"],
         "disqualifiers": r["disqualifiers"],
         "cases": doc["cases"],
+        "full_fidelity": doc.get("full_fidelity", False),
+        "judge_calls": enrichment.get("judge_calls", 0),
+        "judge_json_parse_rate": enrichment.get("judge_json_parse_rate", 0.0),
+        "verdict_agreement": enrichment.get("verdict_agreement"),
+        "adapt_complete_rate": enrichment.get("adapt_complete_rate", 0.0),
+        "avg_judge_quality": enrichment.get("avg_quality"),
+        "avg_judge_usefulness": enrichment.get("avg_usefulness"),
     }
 
 

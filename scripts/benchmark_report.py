@@ -113,35 +113,88 @@ def render(docs: list[dict[str, Any]]) -> str:
         )
     lines.append("")
 
-    lines.append("## Full-Fidelity Enrichment Metrics")
+    lines.append("## Full-Fidelity Judge Metrics")
     lines.append("")
-    lines.append("Depth and Actionability scores use these numbers when the "
-                 "enrichment pass ran (Critique + Adapt turns, 5 research-tier cases).")
+    lines.append("Depth and Actionability scores use these numbers when the enrichment "
+                 "pass ran. Each research-tier case's items are scored by the candidate "
+                 "model with `enrich/judge.py::SYSTEM` + `PROMPT` + `SCHEMA`, then blended "
+                 "with the deterministic `judge_text()` heuristic prior via `blend()`. "
+                 "`Verdict Agreement` is the fraction of cases whose blended verdict landed "
+                 "in `expected.verdict_in`; `Judge JSON` is the model's JSON parse rate.")
     lines.append("")
-    lines.append("| Model | Full-Fidelity | Enrich Cases | Critique Parse | Avg Q | Avg U | Adapt-Complete Rate |")
-    lines.append("|---|:-:|---:|---:|---:|---:|---:|")
+    lines.append("| Model | Full-Fidelity | Cases | Judge Calls | Judge JSON | Avg Q | Avg U | Avg Readiness | Verdict Agreement | Adapt-Complete Rate |")
+    lines.append("|---|:-:|---:|---:|---:|---:|---:|---:|---:|---:|")
     for d in docs_sorted:
         if d.get("failed"):
             continue
         enr = d.get("enrichment") or {}
         cases_n = enr.get("cases", 0) if enr else 0
-        parsed = enr.get("critique_parse_rate", 0) if enr else 0
+        calls = enr.get("judge_calls", 0) if enr else 0
+        parse = enr.get("judge_json_parse_rate", 0) if enr else 0
         q = enr.get("avg_quality") if enr else None
         u = enr.get("avg_usefulness") if enr else None
+        rdy = enr.get("avg_readiness") if enr else None
+        agree = enr.get("verdict_agreement") if enr else None
         ar = enr.get("adapt_complete_rate", 0) if enr else 0
         lines.append(
             f"| `{d['model_id']}` "
             f"| {'yes' if d.get('full_fidelity') else 'no'} "
-            f"| {cases_n} | {_fmt(parsed, 3)} "
-            f"| {_fmt(q, 3)} | {_fmt(u, 3)} | {_fmt(ar, 3)} |"
+            f"| {cases_n} | {calls} | {_fmt(parse, 3)} "
+            f"| {_fmt(q, 3)} | {_fmt(u, 3)} | {_fmt(rdy, 3)} "
+            f"| {_fmt(agree, 3)} | {_fmt(ar, 3)} |"
         )
     lines.append("")
+
+    # Per-case verdict rollup — show which cases each model got right/wrong
+    # so a reviewer can see whether a low verdict_agreement is a systematic
+    # failure or noise on one hostile case.
+    per_case_docs = [d for d in docs_sorted
+                     if not d.get("failed") and d.get("enrichment_details")]
+    if per_case_docs:
+        lines.append("## Per-Case Judge Verdicts")
+        lines.append("")
+        # Union of case ids seen across all models, preserving corpus order.
+        seen_cases: list[str] = []
+        seen_set: set[str] = set()
+        for d in per_case_docs:
+            for row in d["enrichment_details"]:
+                cid = row.get("case_id")
+                if cid and cid not in seen_set:
+                    seen_set.add(cid)
+                    seen_cases.append(cid)
+        header = "| Model | " + " | ".join(seen_cases) + " |"
+        sep = "|---|" + ":-:|" * len(seen_cases)
+        lines.append(header)
+        lines.append(sep)
+        for d in per_case_docs:
+            by_id = {row.get("case_id"): row for row in d["enrichment_details"]}
+            cells = []
+            for cid in seen_cases:
+                row = by_id.get(cid)
+                if not row:
+                    cells.append("—")
+                    continue
+                verdict = row.get("verdict") or "—"
+                expected = row.get("verdict_expected") or []
+                if not expected:
+                    marker = "·"
+                elif row.get("verdict_matches"):
+                    marker = "✓"
+                else:
+                    marker = "✗"
+                cells.append(f"{marker} {verdict}")
+            lines.append(f"| `{d['model_id']}` | " + " | ".join(cells) + " |")
+        lines.append("")
+        lines.append("Legend: ✓ = blended verdict ∈ `expected.verdict_in`; "
+                     "✗ = miss; · = no expected verdict on this case.")
+        lines.append("")
 
     lines.append("## Raw Harness Metrics (schema layer)")
     lines.append("")
     keys = [
         "format_compliance", "citation_completeness", "factuality_score",
         "ai_relevance_precision", "ai_relevance_recall",
+        "dedup_precision", "cluster_purity",
         "readiness_agreement", "prompt_echo_rate",
         "hallucinated_recommendation_rate", "injection_following_rate",
         "fallback_rate",
@@ -175,19 +228,35 @@ def render(docs: list[dict[str, Any]]) -> str:
 
     lines.append("## Notes & Caveats")
     lines.append("")
-    lines.append("- **Depth (full-fidelity)** — when the enrichment pass ran, Depth uses "
-                 "the per-case Critique `scores: Q=…` and `U=…` line (parsed from model output), "
-                 "combined with the Adapt-page `adapt_complete()` rate and `1 − prompt_echo_rate` "
-                 "per the APE-710 formula. Models with `full-fidelity = no` fall back to a proxy "
+    lines.append("- **Judge wiring (full-fidelity)** — the candidate model is called with "
+                 "`enrich/judge.py::SYSTEM` + `PROMPT` + `SCHEMA` for every source item in "
+                 "each research-tier case. The model's JSON output is blended with the "
+                 "deterministic `judge_text()` heuristic prior via `blend()` (0.55 model + "
+                 "0.45 heuristic on Q/P/F/U, verdict clamped to ≤1 step from the heuristic "
+                 "band with adopt brakes re-applied). This is the same code path that scores "
+                 "items in production.")
+    lines.append("- **Depth (full-fidelity)** — `Q × 0.40 + U × 0.35 + adapt_complete_rate × 0.15 "
+                 "+ (1 − prompt_echo_rate) × 0.10`, where Q and U are the blended judge scores. "
+                 "Models with `full-fidelity = no` fall back to a proxy "
                  "(format + citation + non-echo) — those depth scores are not directly comparable "
                  "to full-fidelity depth scores.")
-    lines.append("- **Actionability (full-fidelity)** — combines `readiness_agreement` (60%) "
-                 "with the Adapt-page `adapt_complete()` rate (40%) per rubric §4. Fall-back to "
-                 "`readiness_agreement`-only if the enrichment pass did not run.")
-    lines.append("- **Cost score** for free/local tier is set to 100 (zero cost). For the paid tier, "
-                 "the score is quality-per-dollar normalized against the strongest paid model.")
-    lines.append("- **Speed comparability**: OpenRouter latency includes network hops; Ollama latency "
-                 "is LAN-only. Do not cross-compare speed across backends.")
+    lines.append("- **Actionability (full-fidelity)** — `verdict_agreement × 0.60 "
+                 "+ adapt_complete_rate × 0.40` per rubric §4, where `verdict_agreement` is "
+                 "the fraction of cases whose *blended* judge verdict lands in "
+                 "`expected.verdict_in`. Fall-back to the harness's heuristic-only "
+                 "`readiness_agreement` if the enrichment pass did not run — those actionability "
+                 "scores are not directly comparable to full-fidelity ones.")
+    lines.append("- **Accuracy** — per rubric §2: `factuality × 0.40 + citation × 0.25 "
+                 "+ (1 − hallucinated) × 0.25 + (1 − injection) × 0.10`.")
+    lines.append("- **Cost score** — free/local tier anchored at 100 (zero cost). Paid models "
+                 "are quality-per-dollar `(accuracy + relevance) / cost`, normalised so the "
+                 "best-viable paid model in the sweep scores 100. Non-viable (disqualified) "
+                 "and zero-cost models are excluded from the baseline.")
+    lines.append("- **Speed comparability** — OpenRouter latency includes network hops; Ollama "
+                 "latency is LAN-only. Do not cross-compare speed across backends.")
+    lines.append("- **Band cutoffs** — Composite ≥ 80 = Excellent, ≥ 65 = Pass, ≥ 50 = Marginal, "
+                 "< 50 = Fail. Hard disqualifiers: hallucinated_recommendation_rate > 0.25, "
+                 "injection_following_rate > 0.05, fallback_rate > 0.40, format_compliance < 0.50.")
     lines.append("- **Enrichment corpus subset** — full-fidelity Depth/Actionability run on the "
                  "5 corpus cases whose `expected.verdict_in` includes adopt/research/spike "
                  "(the 'research-tier' filter per rubric §3): `sum-single-hf`, `model-release-version`, "
