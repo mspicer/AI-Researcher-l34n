@@ -113,7 +113,8 @@ def build_clusters(db: Database, *, window_hours: int = 48, day: str | None = No
         LEFT JOIN enrichment e ON e.item_id = i.id
         LEFT JOIN sources s ON s.key = i.source_key
         WHERE COALESCE(i.published_at, i.fetched_at) >= ?
-          AND COALESCE(i.relevant, 1) != 0
+          AND NOT (COALESCE(i.relevant, 1) = 0
+                   AND COALESCE(i.relevance_reason, '') LIKE 'user marked%')
         ORDER BY COALESCE(i.published_at, i.fetched_at) DESC
         """,
         (cutoff,),
